@@ -1,0 +1,4160 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Tactical FPS - 5v5 Round-Based Match</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js r128 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Google Fonts: Rajdhani & Noto Sans JP -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@500;700;900&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-color: #0f1923;
+      font-family: 'Rajdhani', 'Noto Sans JP', sans-serif;
+    }
+    #game-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      z-index: 1;
+    }
+    .val-clip {
+      clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+    }
+    .val-btn-clip {
+      clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+    }
+    @keyframes bannerPop {
+      0% { transform: scale(0.88) translateY(-10px); opacity: 0; }
+      100% { transform: scale(1) translateY(0); opacity: 1; }
+    }
+    .banner-animate {
+      animation: bannerPop 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes valKillBadgePop {
+      0% { transform: translate(-50%, 18px) scale(0.45); opacity: 0; }
+      55% { transform: translate(-50%, -4px) scale(1.12); opacity: 1; }
+      100% { transform: translate(-50%, 0px) scale(1.0); opacity: 1; }
+    }
+    @keyframes valMultiBannerSlide {
+      0% { transform: translate(-50%, -22px) scale(0.82); opacity: 0; letter-spacing: 0.45em; }
+      60% { transform: translate(-50%, 2px) scale(1.04); opacity: 1; letter-spacing: 0.22em; }
+      100% { transform: translate(-50%, 0px) scale(1.0); opacity: 1; letter-spacing: 0.26em; }
+    }
+    .val-kill-pop {
+      animation: valKillBadgePop 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+    .val-multikill-pop {
+      animation: valMultiBannerSlide 0.34s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .damage-float {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      font-family: 'Rajdhani', sans-serif;
+      font-weight: 900;
+      pointer-events: none;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95), 0 0 2px #000;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+    @keyframes valShockwaveRing {
+      0% { transform: translate(-50%, -50%) scale(0.35) rotate(45deg); opacity: 1; border-width: 4px; }
+      100% { transform: translate(-50%, -50%) scale(2.15) rotate(135deg); opacity: 0; border-width: 1px; }
+    }
+    @keyframes valEmblemSpinGlow {
+      0% { box-shadow: 0 0 12px rgba(255,70,85,0.8), inset 0 0 10px rgba(255,255,255,0.4); }
+      50% { box-shadow: 0 0 34px rgba(0,255,204,0.95), inset 0 0 18px rgba(255,255,255,0.8); }
+      100% { box-shadow: 0 0 18px rgba(255,70,85,0.9), inset 0 0 12px rgba(255,255,255,0.5); }
+    }
+    .val-shockwave-anim {
+      animation: valShockwaveRing 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    .val-emblem-glow {
+      animation: valEmblemSpinGlow 0.9s ease-in-out infinite;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: rgba(15, 25, 35, 0.6);
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #ff4655;
+      border-radius: 3px;
+    }
+    #portrait-warning {
+      display: none;
+    }
+    @media screen and (orientation: portrait) and (max-width: 900px) {
+      #portrait-warning {
+        display: flex !important;
+      }
+    }
+  </style>
+</head>
+<body class="text-white">
+
+  <!-- 3D描画用フルスクリーンCanvas -->
+  <canvas id="game-canvas"></canvas>
+
+  <!-- 3D空間追従ダメージポップアップ描画コンテナ -->
+  <div id="damage-popup-layer" class="pointer-events-none fixed inset-0 overflow-hidden" style="z-index: 40;"></div>
+
+  <!-- 被弾時画面端フラッシュエフェクト -->
+  <div id="damage-vignette" class="pointer-events-none fixed inset-0 z-10 opacity-0 transition-opacity duration-150"
+       style="background: radial-gradient(circle, transparent 58%, rgba(255, 45, 65, 0.68) 100%);"></div>
+
+  <!-- キル達成時画面端シアン＆ゴールドフラッシュ -->
+  <div id="kill-vignette" class="pointer-events-none fixed inset-0 z-10 opacity-0 transition-opacity duration-200"
+       style="background: radial-gradient(circle, transparent 62%, rgba(0, 255, 204, 0.42) 100%);"></div>
+
+  <!-- スマホ縦画面警告オーバーレイ -->
+  <div id="portrait-warning" class="fixed inset-0 bg-[#0f1923] flex-col items-center justify-center p-6 text-center" style="z-index: 10000;">
+    <div class="w-16 h-16 mb-4 border-2 border-[#ff4655] rounded-xl flex items-center justify-center animate-bounce">
+      <svg class="w-9 h-9 text-[#ff4655] rotate-90" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <rect x="6" y="2" width="12" height="20" rx="2" ry="2"></rect>
+        <line x1="12" y1="18" x2="12.01" y2="18"></line>
+      </svg>
+    </div>
+    <h2 class="text-2xl font-bold tracking-wider text-white mb-2">横画面（ランドスケープ）専用</h2>
+    <p class="text-sm text-slate-300">端末を横向きに回転させてプレイしてください。</p>
+  </div>
+
+  <!-- WebGLエラー警告 -->
+  <div id="webgl-error" class="hidden fixed inset-0 bg-[#0f1923] flex-col items-center justify-center p-6 text-center" style="z-index: 10000;">
+    <h2 class="text-xl font-bold text-[#ff4655] mb-2">3D描画の初期化に失敗しました</h2>
+    <p id="webgl-error-msg" class="text-sm text-slate-300 max-w-md"></p>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- HUD レイヤー（常に3D画面の上に重ねて表示）                                -->
+  <!-- ===================================================================== -->
+  <div id="hud-layer" class="pointer-events-none fixed inset-0 z-10 flex flex-col justify-between p-2.5 sm:p-4">
+
+    <!-- 上部エリア：左上（レーダー） / 上中央（5v5スコア・タイマー） / 右上（キルフィード・設定） -->
+    <div class="flex items-start justify-between w-full gap-2">
+
+      <!-- 左上：戦術ミニマップ＆現在地コールアウト -->
+      <div class="flex flex-col gap-1.5">
+        <div class="relative w-32 h-32 sm:w-40 sm:h-40 bg-[#0f1923]/90 border border-white/25 rounded-lg overflow-hidden shadow-2xl backdrop-blur-sm">
+          <canvas id="minimap-canvas" width="180" height="180" class="w-full h-full block"></canvas>
+          <div id="callout-badge" class="absolute bottom-1 left-1 right-1 text-center bg-[#0f1923]/90 border border-white/15 text-[10px] font-bold tracking-widest text-amber-300 py-0.5 rounded">
+            ATTACKER SPAWN
+          </div>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span id="move-state-badge" class="bg-[#0f1923]/85 border border-white/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-emerald-400 rounded">
+            READY
+          </span>
+          <span id="hud-mode-badge" class="bg-[#0f1923]/85 border border-white/15 px-2 py-0.5 text-[10px] font-bold tracking-wider text-sky-300 rounded">
+            CASUAL
+          </span>
+        </div>
+      </div>
+
+      <!-- 上中央：5v5 ラウンドスコアボード＆タイマー -->
+      <div class="pointer-events-auto flex flex-col items-center">
+        <div id="top-scoreboard-bar" title="クリックまたはTabキーで戦績表示"
+             class="bg-[#0f1923]/90 border-b-2 border-[#ff4655] px-3 sm:px-5 py-1.5 rounded-b-lg shadow-xl backdrop-blur-sm flex items-center gap-2.5 sm:gap-4 cursor-pointer hover:bg-[#162433] transition">
+          <!-- 味方生存アイコン＆スコア -->
+          <div class="flex items-center gap-2">
+            <div id="ally-alive-dots" class="hidden sm:flex items-center gap-1"></div>
+            <div class="text-right">
+              <div id="hud-ally-role" class="text-[9px] font-bold tracking-widest text-sky-400 leading-none">ATK</div>
+              <div id="score-ally" class="text-xl sm:text-2xl font-black text-sky-400 leading-none">0</div>
+            </div>
+          </div>
+
+          <!-- ラウンド番号＆タイマー -->
+          <div class="flex flex-col items-center px-2 sm:px-3 border-x border-white/15 min-w-[76px]">
+            <div id="round-phase-label" class="text-[9px] font-bold tracking-widest text-amber-300 leading-none">ROUND 1</div>
+            <div id="round-timer-text" class="text-lg sm:text-xl font-black text-white leading-tight font-mono">01:05</div>
+          </div>
+
+          <!-- 敵スコア＆生存アイコン -->
+          <div class="flex items-center gap-2">
+            <div class="text-left">
+              <div id="hud-enemy-role" class="text-[9px] font-bold tracking-widest text-[#ff4655] leading-none">DEF</div>
+              <div id="score-enemy" class="text-xl sm:text-2xl font-black text-[#ff4655] leading-none">0</div>
+            </div>
+            <div id="enemy-alive-dots" class="hidden sm:flex items-center gap-1"></div>
+          </div>
+        </div>
+
+        <!-- スパイク設置済みアラートバー -->
+        <div id="spike-planted-banner" class="hidden mt-1.5 bg-[#ff4655]/95 border border-white/40 px-3 py-0.5 rounded text-[11px] font-black tracking-widest text-white shadow-lg animate-pulse">
+          SPIKE PLANTED — DETONATION IN <span id="spike-detonate-timer">40.0</span>s
+        </div>
+      </div>
+
+      <!-- 右上：設定ボタン・スコアボタン・キルフィード -->
+      <div class="flex flex-col items-end gap-1.5 max-w-[230px] sm:max-w-[280px]">
+        <div class="pointer-events-auto flex items-center gap-1.5">
+          <button type="button" id="btn-toggle-scoreboard" class="bg-[#0f1923]/85 hover:bg-white/20 active:scale-95 border border-white/25 text-white text-[11px] font-bold tracking-wider px-2.5 py-1.5 rounded transition shadow-lg cursor-pointer">
+            戦績 [TAB]
+          </button>
+          <button type="button" id="btn-open-settings" class="bg-[#0f1923]/85 hover:bg-sky-500/80 active:scale-95 border border-sky-400/50 text-sky-200 hover:text-white text-[11px] font-bold tracking-wider px-2.5 py-1.5 rounded transition shadow-lg cursor-pointer">
+            設定 / 配置
+          </button>
+        </div>
+
+        <!-- キルフィードコンテナ -->
+        <div id="killfeed-list" class="flex flex-col items-end gap-1 w-full mt-0.5"></div>
+      </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- VALORANT風 上部マルチキルバナー（SINGLE / DOUBLE / TRIPLE / QUADRA / ACE）-->
+    <!-- =================================================================== -->
+    <div id="val-multikill-banner" class="hidden fixed left-1/2 top-[15%] -translate-x-1/2 pointer-events-none z-40 flex-col items-center">
+      <div class="bg-gradient-to-r from-transparent via-[#0f1923]/95 to-transparent border-y-2 border-[#ff4655] px-8 sm:px-14 py-2 flex flex-col items-center shadow-2xl">
+        <div id="val-multikill-sub" class="text-[10px] sm:text-xs font-bold tracking-[0.35em] text-amber-300 uppercase mb-0.5">
+          ELIMINATION
+        </div>
+        <div id="val-multikill-title" class="text-2xl sm:text-4xl font-black tracking-[0.26em] text-white drop-shadow-[0_0_12px_rgba(255,70,85,0.85)]">
+          SINGLE KILL
+        </div>
+        <div id="val-multikill-pips" class="flex items-center gap-2 mt-1.5"></div>
+      </div>
+    </div>
+
+    <!-- =================================================================== -->
+    <!-- VALORANT風 下部キルエンブレム（スカル＆ダイヤモンドバッジ）                -->
+    <!-- =================================================================== -->
+    <div id="val-kill-emblem" class="hidden fixed left-1/2 bottom-[17%] -translate-x-1/2 pointer-events-none z-40 flex-col items-center">
+      <div class="relative flex items-center justify-center">
+        <!-- 広がる衝撃波ダイヤモンドリング -->
+        <div id="val-kill-shockwave" class="absolute left-1/2 top-1/2 w-20 h-20 sm:w-24 sm:h-24 border-2 border-[#00ffcc] pointer-events-none"></div>
+        <!-- 外側アクセントフレーム -->
+        <div class="absolute w-20 h-20 sm:w-24 sm:h-24 rotate-45 border border-amber-300/80 scale-110"></div>
+        <!-- メインエンブレム -->
+        <div class="val-emblem-glow w-16 h-16 sm:w-20 sm:h-20 rotate-45 bg-gradient-to-br from-[#ff4655] via-[#991b1b] to-[#0f1923] border-2 border-white flex items-center justify-center">
+          <div class="-rotate-45 flex flex-col items-center justify-center">
+            <svg class="w-8 h-8 sm:w-10 sm:h-10 text-white drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C7.58 2 4 5.58 4 10c0 2.85 1.5 5.35 3.75 6.75V20c0 .55.45 1 1 1h6.5c.55 0 1-.45 1-1v-3.25C18.5 15.35 20 12.85 20 10c0-4.42-3.58-8-8-8zm-2.5 11c-.83 0-1.5-.67-1.5-1.5S8.67 10 9.5 10s1.5.67 1.5 1.5S10.33 13 9.5 13zm5 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+            </svg>
+          </div>
+        </div>
+        <div id="val-kill-hs-crown" class="hidden absolute -top-5 w-4 h-4 rotate-45 bg-amber-300 border border-[#0f1923] shadow-[0_0_10px_#fde047]"></div>
+        <div id="val-kill-count-chip" class="absolute -bottom-3.5 bg-[#0f1923] border border-[#00ffcc] px-3 py-0.5 text-[11px] font-black tracking-widest text-[#00ffcc] rounded shadow-lg">
+          1 KILL
+        </div>
+      </div>
+    </div>
+
+    <!-- 中央：タクティカルクロスヘア ＆ ヒットマーカー ＆ 中央ダメージ表示 -->
+    <div id="crosshair" class="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center transition-opacity duration-150">
+      <div id="ch-dot" class="w-1 h-1 bg-[#00ffcc] rounded-full shadow-[0_0_4px_#000]"></div>
+      <div id="ch-top" class="absolute w-[2px] h-2.5 bg-[#00ffcc] shadow-[0_0_2px_#000]" style="transform: translateY(-8px);"></div>
+      <div id="ch-bottom" class="absolute w-[2px] h-2.5 bg-[#00ffcc] shadow-[0_0_2px_#000]" style="transform: translateY(8px);"></div>
+      <div id="ch-left" class="absolute h-[2px] w-2.5 bg-[#00ffcc] shadow-[0_0_2px_#000]" style="transform: translateX(-8px);"></div>
+      <div id="ch-right" class="absolute h-[2px] w-2.5 bg-[#00ffcc] shadow-[0_0_2px_#000]" style="transform: translateX(8px);"></div>
+    </div>
+
+    <!-- クロスヘア上部直近ダメージ表示 -->
+    <div id="center-damage-readout" class="fixed left-1/2 top-[43%] -translate-x-1/2 pointer-events-none opacity-0 transition-opacity duration-150 text-center z-30">
+      <div id="center-dmg-val" class="text-xl sm:text-2xl font-black tracking-wider text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]">-40</div>
+      <div id="center-dmg-zone" class="text-[10px] font-bold tracking-widest text-white/90 bg-[#0f1923]/80 px-2 py-0.5 rounded">BODY</div>
+    </div>
+
+    <!-- ヒットマーカー（×印） -->
+    <div id="hitmarker" class="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-0 transition-opacity duration-75">
+      <svg class="w-7 h-7 text-[#ff4655] drop-shadow-[0_0_4px_rgba(0,0,0,0.9)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="5" y1="5" x2="9" y2="9"></line>
+        <line x1="19" y1="5" x2="15" y2="9"></line>
+        <line x1="5" y1="19" x2="9" y2="15"></line>
+        <line x1="19" y1="19" x2="15" y2="15"></line>
+      </svg>
+    </div>
+
+    <!-- BUYフェーズ（待機時間）通知バナー -->
+    <div id="buy-phase-banner" class="hidden fixed left-1/2 top-[22%] -translate-x-1/2 pointer-events-none bg-[#0f1923]/90 border border-amber-400/80 px-5 py-2 val-clip text-center shadow-2xl">
+      <div class="text-xs font-bold tracking-widest text-amber-300">BUY PHASE — バリア展開中（当たり判定なし）</div>
+      <div class="text-sm text-white font-bold mt-0.5">残り <span id="buy-countdown-num" class="text-amber-300 text-lg">7</span> 秒でバリア解除</div>
+    </div>
+
+    <!-- スパイク設置／解除アクションプロンプト＆プログレスバー -->
+    <div id="spike-action-prompt" class="hidden fixed left-1/2 top-[63%] -translate-x-1/2 pointer-events-none bg-[#0f1923]/95 border border-amber-400 px-4 py-2 rounded-lg shadow-2xl text-center min-w-[230px]">
+      <div id="spike-prompt-title" class="text-xs font-black tracking-widest text-amber-300">
+        [F] 長押しでスパイクを設置
+      </div>
+      <div class="w-full h-2.5 bg-white/15 rounded-full overflow-hidden mt-1.5">
+        <div id="spike-progress-bar" class="h-full bg-amber-400 transition-all duration-75" style="width: 0%;"></div>
+      </div>
+    </div>
+
+    <!-- 観戦モード表示（一人称視点） -->
+    <div id="spectator-banner" class="hidden fixed left-1/2 bottom-24 -translate-x-1/2 pointer-events-auto bg-[#0f1923]/90 border border-sky-400/70 px-4 py-1.5 rounded-lg text-center shadow-xl cursor-pointer">
+      <div class="text-[10px] font-bold tracking-widest text-sky-300">FIRST-PERSON SPECTATING（画面タップ / Space で視点切替）</div>
+      <div id="spectator-target-name" class="text-sm font-bold text-white">ALLY AGENT</div>
+    </div>
+
+    <!-- リロード中インジケーター -->
+    <div id="reload-indicator" class="hidden fixed left-1/2 top-[57%] -translate-x-1/2 pointer-events-none bg-[#0f1923]/90 border border-[#ff4655] px-3 py-1 rounded text-xs font-bold tracking-widest text-amber-300 shadow-lg">
+      RELOADING...
+    </div>
+
+    <!-- ラウンド決着演出バナー（ROUND WON / ROUND LOST / HALF TIME） -->
+    <div id="round-end-banner" class="hidden fixed inset-x-0 top-[28%] pointer-events-none flex flex-col items-center justify-center z-30">
+      <div id="round-end-box" class="banner-animate bg-[#0f1923]/95 border-y-2 border-[#00ffcc] px-10 py-4 shadow-2xl text-center w-full max-w-xl">
+        <div id="round-end-sub" class="text-xs font-bold tracking-[0.25em] text-amber-300 mb-1">ENEMY TEAM ELIMINATED</div>
+        <div id="round-end-title" class="text-3xl sm:text-5xl font-black tracking-widest text-[#00ffcc]">ROUND WON</div>
+      </div>
+    </div>
+
+    <!-- 下部エリア：左下（HP/シールド）＆ 右下（武器・弾薬HUD） -->
+    <div class="flex items-end justify-between w-full">
+      <div class="bg-[#0f1923]/85 border-l-4 border-[#00ffcc] px-3.5 py-2 val-clip shadow-xl backdrop-blur-sm flex items-baseline gap-3.5">
+        <div>
+          <div class="text-[10px] tracking-widest text-slate-400 font-bold">SHIELD</div>
+          <div id="hud-shield" class="text-xl sm:text-2xl font-bold text-sky-300 leading-none">50</div>
+        </div>
+        <div class="h-6 w-[1px] bg-white/20"></div>
+        <div>
+          <div class="text-[10px] tracking-widest text-slate-400 font-bold">HEALTH</div>
+          <div id="hud-hp" class="text-2xl sm:text-3xl font-bold text-white leading-none">100</div>
+        </div>
+      </div>
+
+      <div id="ammo-hud" class="bg-[#0f1923]/85 border-r-4 border-[#ff4655] px-3.5 py-2 val-clip shadow-xl backdrop-blur-sm flex items-center gap-4">
+        <div class="text-right">
+          <div id="weapon-mode-label" class="text-[10px] tracking-widest text-amber-300 font-bold">VANDAL-X // INFINITE</div>
+          <div class="flex items-baseline justify-end gap-1.5 leading-none mt-0.5">
+            <span id="ammo-current" class="text-2xl sm:text-3xl font-bold text-white">30</span>
+            <span class="text-sm font-bold text-slate-400">/</span>
+            <span id="ammo-reserve" class="text-base sm:text-lg font-bold text-emerald-300">∞</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- Tabキー スコアボードオーバーレイ                                         -->
+  <!-- ===================================================================== -->
+  <div id="scoreboard-overlay" class="hidden fixed inset-0 z-30 bg-[#0f1923]/75 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="max-w-2xl w-full bg-[#0f1923]/95 border border-white/20 p-5 val-clip shadow-2xl">
+      <div class="flex items-center justify-between border-b border-white/15 pb-3 mb-3">
+        <div>
+          <span class="text-xs font-bold tracking-widest text-[#ff4655]">5v5 TACTICAL MATCH (FIRST TO 7 / 5R SWAP)</span>
+          <h2 class="text-xl font-black tracking-wider text-white">MATCH SCOREBOARD</h2>
+        </div>
+        <div class="text-lg font-black">
+          <span class="text-sky-400">ALLY <span id="sb-score-ally">0</span></span>
+          <span class="text-slate-500 mx-2">:</span>
+          <span class="text-[#ff4655]"><span id="sb-score-enemy">0</span> ENEMY</span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <div>
+          <div class="text-sky-400 font-bold tracking-wider mb-1.5">ALLY TEAM（青）</div>
+          <div id="sb-ally-rows" class="space-y-1"></div>
+        </div>
+        <div>
+          <div class="text-[#ff4655] font-bold tracking-wider mb-1.5">ENEMY TEAM（赤）</div>
+          <div id="sb-enemy-rows" class="space-y-1"></div>
+        </div>
+      </div>
+      <div class="mt-4 text-right">
+        <button type="button" id="btn-close-scoreboard" class="bg-white/15 hover:bg-white/25 px-4 py-1.5 rounded text-xs font-bold tracking-wider cursor-pointer">
+          閉じる
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- マッチ決着（VICTORY / DEFEAT）リザルト画面                             -->
+  <!-- ===================================================================== -->
+  <div id="match-over-overlay" class="hidden fixed inset-0 z-40 bg-[#0f1923]/88 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="max-w-xl w-full bg-[#0f1923] border-2 border-[#ff4655] p-6 sm:p-8 val-clip shadow-2xl text-center">
+      <div id="match-over-sub" class="text-xs font-bold tracking-[0.3em] text-amber-300 mb-1">MATCH COMPLETE</div>
+      <h2 id="match-over-title" class="text-4xl sm:text-5xl font-black tracking-widest text-[#00ffcc] mb-2">VICTORY</h2>
+      <div id="match-over-score" class="text-2xl font-black text-white mb-2">7 - 4</div>
+      <div id="match-over-rank-delta" class="hidden mb-4 inline-block bg-amber-500/20 border border-amber-400/60 px-3.5 py-1 rounded text-xs font-bold text-amber-300"></div>
+      <div id="match-over-stats" class="bg-white/5 border border-white/10 rounded p-4 mb-6 text-xs text-slate-200 space-y-1.5"></div>
+      <button type="button" id="btn-rematch" class="w-full py-3.5 bg-[#ff4655] hover:bg-[#ff5b68] text-white font-bold text-base tracking-widest val-btn-clip shadow-lg transition cursor-pointer">
+        ロビーへ戻る（モード選択へ）
+      </button>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- スマホ専用タッチコントロール（位置カスタマイズ対応）                         -->
+  <!-- ===================================================================== -->
+  <div id="mobile-controls" class="hidden fixed inset-0 z-20 pointer-events-none">
+    <div id="joystick-zone" data-hud-id="joystick"
+         style="left: 24px; top: calc(100vh - 152px);"
+         class="mobile-hud-item pointer-events-auto fixed w-32 h-32 rounded-full bg-white/10 border-2 border-white/25 backdrop-blur-xs flex items-center justify-center">
+      <div id="joystick-knob" class="w-12 h-12 rounded-full bg-[#ff4655]/85 border-2 border-white shadow-lg transition-transform duration-75"></div>
+    </div>
+
+    <div id="look-zone" class="pointer-events-auto fixed top-16 right-0 bottom-0 w-1/2"></div>
+
+    <button type="button" id="btn-mobile-spike" data-hud-id="spike"
+            style="left: calc(50vw - 44px); top: calc(100vh - 140px);"
+            class="mobile-hud-item pointer-events-auto fixed w-22 px-3 py-2.5 rounded-xl bg-amber-500/90 border-2 border-white text-[#0f1923] font-black text-xs tracking-wider active:scale-95 shadow-xl z-30">
+      SPIKE [F]
+    </button>
+
+    <button type="button" id="btn-mobile-reload" data-hud-id="reload"
+            style="left: calc(100vw - 148px); top: calc(100vh - 216px);"
+            class="mobile-hud-item pointer-events-auto fixed w-12 h-12 rounded-full bg-[#0f1923]/85 border-2 border-white/30 text-white font-bold text-xs tracking-wider active:scale-95 shadow-lg z-30">
+      R
+    </button>
+
+    <button type="button" id="btn-mobile-ads" data-hud-id="ads"
+            style="left: calc(100vw - 84px); top: calc(100vh - 220px);"
+            class="mobile-hud-item pointer-events-auto fixed w-14 h-14 rounded-full bg-[#0f1923]/85 border-2 border-sky-400/70 text-sky-300 font-bold text-xs tracking-wider active:scale-95 shadow-lg z-30">
+      ADS
+    </button>
+
+    <button type="button" id="btn-mobile-walk" data-hud-id="walk"
+            style="left: calc(100vw - 228px); top: calc(100vh - 132px);"
+            class="mobile-hud-item pointer-events-auto fixed w-12 h-12 rounded-full bg-[#0f1923]/80 border-2 border-white/30 text-white font-bold text-[10px] tracking-wider active:scale-95 shadow-lg z-30">
+      WALK
+    </button>
+
+    <button type="button" id="btn-mobile-jump" data-hud-id="jump"
+            style="left: calc(100vw - 168px); top: calc(100vh - 136px);"
+            class="mobile-hud-item pointer-events-auto fixed w-13 h-13 p-3 rounded-full bg-[#0f1923]/85 border-2 border-white/40 text-white font-bold text-[11px] tracking-wider active:scale-95 shadow-lg z-30">
+      JUMP
+    </button>
+
+    <button type="button" id="btn-mobile-fire" data-hud-id="fire"
+            style="left: calc(100vw - 104px); top: calc(100vh - 148px);"
+            class="mobile-hud-item pointer-events-auto fixed w-20 h-20 rounded-full bg-[#ff4655]/90 border-3 border-white text-white font-bold text-sm tracking-widest active:scale-95 shadow-2xl flex items-center justify-center z-30">
+      FIRE
+    </button>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- スマホHUDドラッグ配置編集モードオーバーレイ                            -->
+  <!-- ===================================================================== -->
+  <div id="hud-layout-editor" class="hidden fixed inset-0 bg-[#0f1923]/45 backdrop-blur-[1px] pointer-events-none flex flex-col items-center justify-start pt-4" style="z-index: 10001;">
+    <div class="pointer-events-auto bg-[#0f1923]/95 border-2 border-amber-400 px-5 py-3 rounded-xl shadow-2xl text-center max-w-md mx-4">
+      <div class="text-xs font-bold tracking-widest text-amber-300">MOBILE HUD CUSTOMIZER</div>
+      <div class="text-sm text-white font-bold mt-0.5">各ボタンやスティックをドラッグして好きな位置へ移動</div>
+      <div class="flex items-center justify-center gap-3 mt-3">
+        <button type="button" id="btn-hud-reset-default" class="bg-white/15 hover:bg-white/25 text-white text-xs font-bold px-3.5 py-2 rounded cursor-pointer">
+          初期配置に戻す
+        </button>
+        <button type="button" id="btn-hud-save-exit" class="bg-[#00ffcc] hover:bg-emerald-300 text-[#0f1923] text-xs font-black px-4 py-2 rounded cursor-pointer">
+          配置を保存して戻る
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 感度・PCキー割り当て・スマホ配置 設定モーダル                           -->
+  <!-- ===================================================================== -->
+  <div id="settings-modal" class="hidden fixed inset-0 bg-[#0f1923]/85 backdrop-blur-md items-center justify-center p-3 sm:p-6" style="z-index: 9999;">
+    <div class="max-w-2xl w-full max-h-[90vh] bg-[#0f1923] border-2 border-sky-400/60 val-clip shadow-2xl flex flex-col overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-white/15 bg-white/5">
+        <div>
+          <div class="text-[10px] font-bold tracking-widest text-sky-400">CONTROLS &amp; SENSITIVITY</div>
+          <h2 class="text-lg sm:text-xl font-black tracking-wider text-white">感度・キー配置・モバイルHUD設定</h2>
+        </div>
+        <button type="button" id="btn-close-settings" class="bg-[#ff4655] hover:bg-[#ff5b68] text-white text-xs font-bold px-3.5 py-2 rounded cursor-pointer">
+          保存して閉じる
+        </button>
+      </div>
+
+      <div class="p-5 overflow-y-auto custom-scroll space-y-6 text-xs">
+        <div>
+          <div class="text-amber-300 font-bold tracking-widest mb-3 border-b border-white/10 pb-1">1. 視点感度設定（SENSITIVITY）</div>
+          <div class="space-y-3.5 bg-white/5 p-3.5 rounded-lg border border-white/10">
+            <div>
+              <div class="flex justify-between font-bold mb-1">
+                <span>PC マウス感度</span>
+                <span id="val-mouse-sens" class="text-sky-300 font-mono">1.00</span>
+              </div>
+              <input id="slider-mouse-sens" type="range" min="0.2" max="3.0" step="0.05" value="1.0" class="w-full accent-[#ff4655] cursor-pointer" />
+            </div>
+            <div>
+              <div class="flex justify-between font-bold mb-1">
+                <span>スマホ タッチスワイプ感度</span>
+                <span id="val-touch-sens" class="text-sky-300 font-mono">1.00</span>
+              </div>
+              <input id="slider-touch-sens" type="range" min="0.2" max="3.0" step="0.05" value="1.0" class="w-full accent-[#ff4655] cursor-pointer" />
+            </div>
+            <div>
+              <div class="flex justify-between font-bold mb-1">
+                <span>ADS（覗き込み時）ズーム感度倍率</span>
+                <span id="val-ads-sens" class="text-sky-300 font-mono">0.65</span>
+              </div>
+              <input id="slider-ads-sens" type="range" min="0.2" max="1.5" step="0.05" value="0.65" class="w-full accent-sky-400 cursor-pointer" />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-center justify-between mb-2 border-b border-white/10 pb-1">
+            <span class="text-amber-300 font-bold tracking-widest">2. PC キーボード・マウス配置（クリックして変更）</span>
+            <button type="button" id="btn-reset-keybinds" class="text-[11px] text-slate-300 hover:text-white underline cursor-pointer">初期キーに戻す</button>
+          </div>
+          <div id="keybind-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+        </div>
+
+        <div>
+          <div class="text-amber-300 font-bold tracking-widest mb-2 border-b border-white/10 pb-1">3. スマホ・タブレット ボタン配置カスタマイズ</div>
+          <div class="bg-white/5 p-3.5 rounded-lg border border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div class="text-slate-300 leading-relaxed">
+              移動スティックやFIRE・ADS・SPIKE・JUMP・Rボタンの位置を画面上で直接ドラッグして自由に変更できます。
+            </div>
+            <button type="button" id="btn-open-hud-editor" class="shrink-0 bg-amber-400 hover:bg-amber-300 text-[#0f1923] font-black px-4 py-2.5 rounded shadow cursor-pointer">
+              ボタン配置を編集する
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- モード選択ロビー画面（カジュアル / ランク世界対戦 / フレンド合言葉対戦）  -->
+  <!-- ===================================================================== -->
+  <div id="start-overlay" class="fixed inset-0 z-30 bg-[#0f1923]/78 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+    <div class="max-w-2xl w-full bg-[#0f1923]/95 border border-white/20 p-5 sm:p-7 val-clip shadow-2xl my-auto">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div class="flex items-center gap-2">
+          <span class="bg-[#ff4655] text-white text-[11px] font-bold tracking-widest px-2.5 py-0.5">
+            TACTICAL 5v5 FPS
+          </span>
+          <span id="lobby-rank-pill" class="bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[11px] font-bold px-2.5 py-0.5 rounded">
+            RANK: SILVER II (42 RP)
+          </span>
+        </div>
+        <button type="button" id="btn-start-open-settings" class="bg-white/10 hover:bg-sky-500/80 border border-white/25 text-white text-xs font-bold px-3 py-1.5 rounded transition cursor-pointer">
+          感度 / 配置設定
+        </button>
+      </div>
+
+      <h1 class="text-2xl sm:text-3xl font-black tracking-wider text-white mb-1">
+        PLAY MODE SELECT
+      </h1>
+      <p class="text-xs sm:text-sm text-slate-300 mb-4">
+        プレイするゲームモードを選択してください（選択後にマッチ開始ボタンが有効になります）。
+      </p>
+
+      <!-- 3つのマッチモード選択カード -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-4">
+        <!-- 1. カジュアルマッチ -->
+        <button type="button" data-mode="casual" class="mode-card text-left p-3.5 rounded-lg border-2 border-white/20 bg-white/5 hover:bg-white/10 transition cursor-pointer flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] font-bold tracking-widest text-sky-400">NORMAL / NPC</span>
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+            </div>
+            <div class="text-base font-black text-white">カジュアルマッチ</div>
+            <p class="text-[11px] text-slate-300 mt-1 leading-snug">
+              NPCの味方・敵と一緒に気軽に5v5の爆破ルールを遊べるノーマルモード。
+            </p>
+          </div>
+          <div class="mt-2.5 text-[10px] font-bold text-sky-300">● 即時スタート可能</div>
+        </button>
+
+        <!-- 2. ランクマッチ（世界ランダム対戦） -->
+        <button type="button" data-mode="ranked" class="mode-card text-left p-3.5 rounded-lg border-2 border-white/20 bg-white/5 hover:bg-white/10 transition cursor-pointer flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] font-bold tracking-widest text-amber-400">GLOBAL / RANKED</span>
+              <span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+            </div>
+            <div class="text-base font-black text-white">ランクマッチ</div>
+            <p class="text-[11px] text-slate-300 mt-1 leading-snug">
+              SNS公開対応！世界中のオンラインプレイヤーとランダムでマッチングしてRPを競う真剣勝負。
+            </p>
+          </div>
+          <div class="mt-2.5 text-[10px] font-bold text-amber-300">● 世界マッチング検索</div>
+        </button>
+
+        <!-- 3. フレンドマッチ（合言葉対戦） -->
+        <button type="button" data-mode="friend" class="mode-card text-left p-3.5 rounded-lg border-2 border-white/20 bg-white/5 hover:bg-white/10 transition cursor-pointer flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[10px] font-bold tracking-widest text-emerald-400">PRIVATE / PASSCODE</span>
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
+            </div>
+            <div class="text-base font-black text-white">フレンドマッチ</div>
+            <p class="text-[11px] text-slate-300 mt-1 leading-snug">
+              合言葉を伝えることで同じ合言葉同士の友達・知り合いとリアルタイム通信対戦！
+            </p>
+          </div>
+          <div class="mt-2.5 text-[10px] font-bold text-emerald-300">● 合言葉ルーム通信</div>
+        </button>
+      </div>
+
+      <!-- 選択中モードの詳細サブパネル -->
+      <div id="mode-detail-box" class="mb-4 bg-white/5 border border-white/15 rounded-lg p-3.5 text-xs min-h-[84px] flex flex-col justify-center">
+        <div id="lobby-panel-none" class="text-center text-slate-400">
+          上のカードから「カジュアルマッチ」「ランクマッチ」「フレンドマッチ」のいずれかを選択してください。
+        </div>
+
+        <div id="lobby-panel-casual" class="hidden">
+          <div class="font-bold text-sky-400 text-sm mb-1">CASUAL MATCH — NPC 5v5 スタンダード</div>
+          <div class="text-slate-300">味方AI 4名 vs 敵AI 5名 の標準マッチです。7ラウンド先取（5ラウンドごとに攻守交代）で決着します。</div>
+        </div>
+
+        <div id="lobby-panel-ranked" class="hidden">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+            <div>
+              <div class="font-bold text-amber-400 text-sm">RANKED MATCH — グローバル・リアルタイムロビー</div>
+              <div id="ranked-queue-status" class="text-slate-300 text-[11px]">「対戦相手を検索」を押して世界中のオンラインロビーへ接続してください。</div>
+            </div>
+            <button type="button" id="btn-find-ranked" class="bg-amber-400 hover:bg-amber-300 text-[#0f1923] font-black px-3.5 py-2 rounded shadow cursor-pointer">
+              対戦相手を検索
+            </button>
+          </div>
+          <div id="ranked-roster-preview" class="hidden grid grid-cols-2 gap-2 text-[11px] bg-[#0f1923]/80 p-2 rounded border border-white/10"></div>
+        </div>
+
+        <div id="lobby-panel-friend" class="hidden">
+          <div class="font-bold text-emerald-400 text-sm mb-1.5">FRIEND MATCH — 合言葉プライベートロビー</div>
+          <div class="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+            <input id="input-friend-passcode" type="text" maxlength="16" placeholder="合言葉を入力（例: TOMODACHI）"
+                   class="flex-1 bg-[#0f1923] border border-emerald-400/50 focus:border-emerald-300 outline-none px-3 py-2 rounded text-white font-bold tracking-wider text-sm" />
+            <button type="button" id="btn-copy-passcode" class="bg-white/15 hover:bg-white/25 text-white font-bold px-3 py-2 rounded cursor-pointer">
+              合言葉をコピー
+            </button>
+            <button type="button" id="btn-join-friend-room" class="bg-emerald-500 hover:bg-emerald-400 text-[#0f1923] font-black px-3.5 py-2 rounded cursor-pointer">
+              合言葉で入室
+            </button>
+          </div>
+          <div id="friend-room-status" class="text-[11px] text-slate-300 mt-2">
+            ※ 友達に同じ合言葉を伝えて「合言葉で入室」を押すと専用ロビーが作成されます（足りない枠はAIが自動補充）。
+          </div>
+          <div id="friend-online-list" class="hidden mt-2 pt-2 border-t border-white/10 text-[11px] text-emerald-300 font-bold"></div>
+        </div>
+      </div>
+
+      <!-- マッチ開始ボタン（モード未選択時はロック） -->
+      <button type="button" id="btn-start-game" disabled
+              class="w-full py-3.5 bg-slate-700/70 text-slate-400 font-bold text-base sm:text-lg tracking-widest val-btn-clip shadow-lg transition cursor-not-allowed">
+        <span id="btn-start-text">モードを選択してください</span>
+      </button>
+      <div id="start-lobby-hint" class="text-center text-[11px] text-slate-400 mt-2">
+        ※ 上の3つのマッチモードから1つを選択すると開始できます
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * ============================================================================
+     * TACTICAL FPS - FULL INTEGRATED EDITION (5v5 + SPIKE + MULTIPLAYER)
+     * ============================================================================
+     */
+
+    // オンラインマルチプレイヤー通信マネージャー（Firestoreリアルタイム同期）
+    const netState = {
+      enabled: false,
+      db: null,
+      auth: null,
+      fsMod: null,
+      userId: null,
+      appId: typeof __app_id !== 'undefined' ? __app_id : 'tactical-5v5-fps-online',
+      roomId: null,
+      unsubscribeRoom: null,
+      unsubscribeEvents: null,
+      remotePlayers: new Map(),
+      lastSyncTime: 0,
+      processedEventIds: new Set()
+    };
+
+    async function initMultiplayerBackend() {
+      try {
+        if (typeof __firebase_config === 'undefined' || !__firebase_config) return false;
+        const appMod = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+        const authMod = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+        const fsMod = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = appMod.initializeApp(firebaseConfig);
+        netState.db = fsMod.getFirestore(app);
+        netState.auth = authMod.getAuth(app);
+        netState.fsMod = fsMod;
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await authMod.signInWithCustomToken(netState.auth, __initial_auth_token);
+        } else {
+          await authMod.signInAnonymously(netState.auth);
+        }
+        netState.userId = netState.auth.currentUser?.uid || ('player_' + Math.random().toString(36).slice(2, 10));
+        netState.enabled = true;
+        return true;
+      } catch (e) {
+        console.warn('Multiplayer offline fallback:', e);
+        netState.enabled = false;
+        return false;
+      }
+    }
+
+    function leaveOnlineRoom() {
+      if (netState.unsubscribeRoom) {
+        netState.unsubscribeRoom();
+        netState.unsubscribeRoom = null;
+      }
+      if (netState.unsubscribeEvents) {
+        netState.unsubscribeEvents();
+        netState.unsubscribeEvents = null;
+      }
+      if (netState.enabled && netState.db && netState.fsMod && netState.roomId && netState.userId) {
+        const { doc, deleteDoc } = netState.fsMod;
+        const myDocRef = doc(netState.db, 'artifacts', netState.appId, 'public', 'data', `room_${netState.roomId}_players`, netState.userId);
+        deleteDoc(myDocRef).catch(() => {});
+      }
+      netState.remotePlayers.forEach(entry => {
+        if (entry.agentRef) entry.agentRef.isRemoteControlled = false;
+      });
+      netState.remotePlayers.clear();
+      netState.roomId = null;
+    }
+
+    async function joinOnlineRoom(roomKey, onRosterUpdated) {
+      leaveOnlineRoom();
+      const safeRoom = roomKey.replace(/[^a-zA-Z0-9_\-\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/g, '_').slice(0, 24) || 'DEFAULT';
+      netState.roomId = safeRoom;
+
+      if (!netState.enabled) {
+        await initMultiplayerBackend();
+      }
+      if (!netState.enabled || !netState.db || !netState.fsMod || !netState.userId) {
+        if (onRosterUpdated) onRosterUpdated([]);
+        return false;
+      }
+
+      const { doc, setDoc, onSnapshot, collection } = netState.fsMod;
+      const playersCol = collection(netState.db, 'artifacts', netState.appId, 'public', 'data', `room_${safeRoom}_players`);
+      const myDocRef = doc(netState.db, 'artifacts', netState.appId, 'public', 'data', `room_${safeRoom}_players`, netState.userId);
+
+      await setDoc(myDocRef, {
+        uid: netState.userId,
+        name: `Player_${netState.userId.slice(0, 4).toUpperCase()}`,
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+        yaw: player.yaw,
+        hp: player.hp,
+        shield: player.shield,
+        isDead: player.isDead,
+        kills: player.kills,
+        deaths: player.deaths,
+        updatedAt: Date.now()
+      });
+
+      netState.unsubscribeRoom = onSnapshot(playersCol, (snap) => {
+        const activePeers = [];
+        const now = Date.now();
+        snap.forEach((docSnap) => {
+          const d = docSnap.data();
+          if (!d || d.uid === netState.userId) return;
+          if (now - (d.updatedAt || 0) > 15000) return;
+          activePeers.push(d);
+        });
+        syncRemotePlayersToAgents(activePeers);
+        if (onRosterUpdated) onRosterUpdated(activePeers);
+      }, (err) => {
+        console.warn('Room sync error:', err);
+      });
+
+      const eventsCol = collection(netState.db, 'artifacts', netState.appId, 'public', 'data', `room_${safeRoom}_events`);
+      netState.unsubscribeEvents = onSnapshot(eventsCol, (snap) => {
+        const now = Date.now();
+        snap.docChanges().forEach((change) => {
+          if (change.type !== 'added') return;
+          const ev = change.doc.data();
+          const evId = change.doc.id;
+          if (!ev || ev.sender === netState.userId || netState.processedEventIds.has(evId)) return;
+          if (now - (ev.ts || 0) > 6000) return;
+          netState.processedEventIds.add(evId);
+          handleRemoteCombatEvent(ev);
+        });
+      }, (err) => {
+        console.warn('Events sync error:', err);
+      });
+
+      return true;
+    }
+
+    function syncRemotePlayersToAgents(peers) {
+      const allySlots = agents.filter(a => a.team === 'ally');
+      const enemySlots = agents.filter(a => a.team === 'enemy');
+
+      agents.forEach(a => { a.isRemoteControlled = false; });
+
+      peers.forEach((peer, idx) => {
+        const pool = (idx % 2 === 0) ? enemySlots : allySlots;
+        const slotIdx = Math.floor(idx / 2);
+        const targetAgent = pool[slotIdx % pool.length];
+        if (!targetAgent) return;
+
+        targetAgent.isRemoteControlled = true;
+        targetAgent.remoteUid = peer.uid;
+        targetAgent.name = `[LIVE] ${peer.name}`;
+        targetAgent.targetRemotePos = new THREE.Vector3(peer.x || 0, peer.y || 0, peer.z || 0);
+        targetAgent.targetRemoteYaw = peer.yaw || 0;
+        targetAgent.hp = peer.hp ?? 100;
+        targetAgent.shield = peer.shield ?? 50;
+        targetAgent.isDead = Boolean(peer.isDead);
+        targetAgent.kills = peer.kills ?? targetAgent.kills;
+        targetAgent.deaths = peer.deaths ?? targetAgent.deaths;
+      });
+    }
+
+    function broadcastLocalState(dt) {
+      if (!netState.enabled || !netState.db || !netState.fsMod || !netState.roomId || !netState.userId) return;
+      const now = performance.now();
+      if (now - netState.lastSyncTime < 90) return;
+      netState.lastSyncTime = now;
+
+      const { doc, setDoc } = netState.fsMod;
+      const myDocRef = doc(netState.db, 'artifacts', netState.appId, 'public', 'data', `room_${netState.roomId}_players`, netState.userId);
+      setDoc(myDocRef, {
+        uid: netState.userId,
+        name: `Player_${netState.userId.slice(0, 4).toUpperCase()}`,
+        x: Number(player.position.x.toFixed(2)),
+        y: Number(player.position.y.toFixed(2)),
+        z: Number(player.position.z.toFixed(2)),
+        yaw: Number(player.yaw.toFixed(3)),
+        hp: player.hp,
+        shield: player.shield,
+        isDead: player.isDead,
+        kills: player.kills,
+        deaths: player.deaths,
+        updatedAt: Date.now()
+      }).catch(() => {});
+    }
+
+    function sendCombatEvent(type, payload) {
+      if (!netState.enabled || !netState.db || !netState.fsMod || !netState.roomId || !netState.userId) return;
+      const { doc, setDoc } = netState.fsMod;
+      const evId = `${netState.userId}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+      const evRef = doc(netState.db, 'artifacts', netState.appId, 'public', 'data', `room_${netState.roomId}_events`, evId);
+      setDoc(evRef, {
+        sender: netState.userId,
+        type,
+        ts: Date.now(),
+        ...payload
+      }).catch(() => {});
+    }
+
+    function handleRemoteCombatEvent(ev) {
+      if (ev.type === 'SHOT') {
+        const s = new THREE.Vector3(ev.sx, ev.sy, ev.sz);
+        const e = new THREE.Vector3(ev.ex, ev.ey, ev.ez);
+        spawnHighSpeedTracer(s, e, 0xff4655);
+        const d = s.distanceTo(camera.position);
+        if (d < 35) playGunshotSound(Math.max(0.1, 0.5 * (1 - d / 35)));
+      } else if (ev.type === 'HIT_PLAYER' && ev.targetUid === netState.userId) {
+        const fakeAttacker = { name: ev.attackerName || 'RIVAL', kills: 0 };
+        applyDamageToPlayer(ev.damage || 40, fakeAttacker);
+      } else if (ev.type === 'SPIKE_PLANT') {
+        const zone = plantZones.find(z => z.id === ev.siteId) || plantZones[0];
+        if (!spikeState.planted) completeSpikePlant(zone, ev.planterName || 'RIVAL');
+      }
+    }
+
+    const DEFAULT_KEYBINDS = {
+      forward: 'KeyW',
+      backward: 'KeyS',
+      left: 'KeyA',
+      right: 'KeyD',
+      jump: 'Space',
+      walk: 'ShiftLeft',
+      reload: 'KeyR',
+      interact: 'KeyF',
+      fire: 'Mouse0',
+      ads: 'Mouse2'
+    };
+
+    const userSettings = {
+      mouseSensMultiplier: 1.0,
+      touchSensMultiplier: 1.0,
+      adsSensMultiplier: 0.65,
+      keybinds: { ...DEFAULT_KEYBINDS },
+      mobileHudPositions: {}
+    };
+
+    const PLAYER_CONFIG = {
+      radius: 0.42,
+      height: 1.75,
+      eyeHeight: 1.58,
+      walkSpeed: 5.3,
+      shiftWalkSpeed: 2.9,
+      adsWalkSpeed: 3.4,
+      jumpVelocity: 6.8,
+      gravity: 20.0,
+      baseMouseSensitivity: 0.0022,
+      baseTouchSensitivity: 0.0048
+    };
+
+    const WEAPON_CONFIG = {
+      magSize: 30,
+      fireRate: 0.095,
+      reloadDuration: 1.45,
+      baseFov: 74,
+      adsFov: 50,
+      recoilPitchStep: 0.016,
+      recoilYawRange: 0.013,
+      recoilRecoverySpeed: 7.5,
+      damageHead: 160,
+      damageBody: 40,
+      damageLegs: 34
+    };
+
+    const MATCH_CONFIG = {
+      roundsToWin: 7,
+      halfTimeRound: 5,
+      buyPhaseTime: 6.5,
+      roundActiveTime: 70.0,
+      roundEndDelay: 3.8,
+      spikePlantTime: 3.2,
+      spikeDefuseTime: 4.5,
+      spikeDetonateTime: 40.0
+    };
+
+    const MAP_BOUNDS = { width: 52, depth: 56 };
+
+    let scene, camera, renderer;
+    let clock = new THREE.Clock();
+    const colliders = [];
+    const barrierColliders = [];
+    const barrierMeshes = [];
+    const mapVisuals = [];
+    const shootableMeshes = [];
+    const agents = [];
+    const navNodes = [];
+    const plantZones = [];
+    let spikeMesh = null;
+
+    const activeTracers = [];
+    const activeSparks = [];
+    const activeKillEffects = [];
+    const bulletHoles = [];
+    const damagePopups = [];
+    const MAX_BULLET_HOLES = 40;
+
+    let weaponPivot, gunGroup, muzzlePoint, muzzleFlashMesh, sightReticleMesh;
+    const weaponState = {
+      ammo: WEAPON_CONFIG.magSize,
+      isADS: false,
+      adsLerp: 0,
+      isFiring: false,
+      fireCooldown: 0,
+      shotsFiredBurst: 0,
+      isReloading: false,
+      reloadTimer: 0,
+      kickback: 0,
+      bobTimer: 0,
+      flashTimer: 0
+    };
+
+    const recoilState = {
+      unrecoveredPitch: 0,
+      unrecoveredYaw: 0
+    };
+
+    const player = {
+      name: 'YOU (AGENT)',
+      team: 'ally',
+      position: new THREE.Vector3(0, 0, 23.0),
+      velocity: new THREE.Vector3(0, 0, 0),
+      yaw: 0,
+      pitch: 0,
+      isGrounded: true,
+      isWalkingSlow: false,
+      hp: 100,
+      shield: 50,
+      isDead: false,
+      kills: 0,
+      roundKills: 0,
+      deaths: 0,
+      assists: 0,
+      damageDealt: 0,
+      spectateTargetIndex: 0,
+      isInteractingSpike: false
+    };
+
+    const renderedCamPos = new THREE.Vector3(0, PLAYER_CONFIG.eyeHeight, 23.0);
+    let renderedYaw = 0;
+    let renderedPitch = 0;
+
+    const matchState = {
+      gameMode: null, // 'casual' | 'ranked' | 'friend'
+      friendPasscode: '',
+      isLobbyReady: false,
+      rankPoints: 42,
+      roundNumber: 1,
+      scoreAlly: 0,
+      scoreEnemy: 0,
+      playerSide: 'ATK', // 'ATK' (1-5R) -> 'DEF' (6R以降)
+      phase: 'BUY',
+      phaseTimer: MATCH_CONFIG.buyPhaseTime,
+      matchOver: false
+    };
+
+    const spikeState = {
+      planted: false,
+      siteId: null,
+      position: new THREE.Vector3(),
+      detonateTimer: 0,
+      actionProgress: 0,
+      activeActorName: null
+    };
+
+    const actionKeys = {
+      forward: false,
+      backward: false,
+      left: false,
+      right: false,
+      jump: false,
+      walk: false
+    };
+
+    const touchInput = {
+      moveX: 0, moveY: 0,
+      joystickId: null, lookId: null,
+      lastLookX: 0, lastLookY: 0
+    };
+
+    let isMobileDevice = false;
+    let isPlaying = false;
+    let isSettingsOpen = false;
+    let isHudEditing = false;
+    let listeningAction = null;
+    let audioCtx = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      try {
+        if (typeof THREE === 'undefined') {
+          throw new Error('Three.js ライブラリの読み込みに失敗しました。');
+        }
+        initThreeEngine();
+        buildTacticalMap();
+        buildBuyPhaseBarriers();
+        buildNavGraph();
+        buildFirstPersonWeapon();
+        spawnAllAgents();
+        setupControls();
+        setupSettingsUI();
+        setupLobbyModeUI();
+        startRound(1);
+        drawMinimap();
+        animate();
+      } catch (err) {
+        console.error(err);
+        const errBox = document.getElementById('webgl-error');
+        const errMsg = document.getElementById('webgl-error-msg');
+        errMsg.textContent = err.message || 'WebGLコンテキストを作成できませんでした。';
+        errBox.classList.remove('hidden');
+        errBox.classList.add('flex');
+      }
+    });
+
+    function initAudio() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) audioCtx = new AudioContext();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function playGunshotSound(volumeScale = 1.0) {
+      if (!audioCtx || volumeScale <= 0.02) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const oscGain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(165, now);
+      osc.frequency.exponentialRampToValueAtTime(38, now + 0.08);
+      oscGain.gain.setValueAtTime(0.30 * volumeScale, now);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.connect(oscGain);
+      oscGain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.09);
+
+      const bufferSize = Math.floor(audioCtx.sampleRate * 0.1);
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioCtx.sampleRate * 0.024));
+      }
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1400, now);
+      const noiseGain = audioCtx.createGain();
+      noiseGain.gain.setValueAtTime(0.26 * volumeScale, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      noise.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(audioCtx.destination);
+      noise.start(now);
+    }
+
+    function playHitmarkerSound(isHeadshot = false, isKill = false) {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = isKill ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(isKill ? 1050 : (isHeadshot ? 1320 : 880), now);
+      osc.frequency.exponentialRampToValueAtTime(isKill ? 1580 : (isHeadshot ? 1760 : 520), now + 0.08);
+      gain.gain.setValueAtTime(0.24, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.095);
+    }
+
+    function playMultiKillBannerSound(killCount) {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const baseFreqs = [440, 554.37, 659.25, 880, 1108.73];
+      const steps = Math.min(5, Math.max(1, killCount));
+      for (let i = 0; i < steps; i++) {
+        const t = now + i * 0.065;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = i === steps - 1 ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(baseFreqs[i], t);
+        gain.gain.setValueAtTime(0.18, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 0.25);
+      }
+    }
+
+    function playReloadSound() {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.setValueAtTime(480, now + 0.12);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.23);
+    }
+
+    function createProceduralSurfaceTexture(baseHex, accentHex, grainAlpha = 0.08) {
+      const c = document.createElement('canvas');
+      c.width = 256;
+      c.height = 256;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = baseHex;
+      ctx.fillRect(0, 0, 256, 256);
+
+      ctx.fillStyle = accentHex;
+      for (let i = 0; i < 650; i++) {
+        const x = Math.random() * 256;
+        const y = Math.random() * 256;
+        const s = 1 + Math.random() * 2.5;
+        ctx.globalAlpha = grainAlpha * Math.random();
+        ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 0.14;
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(2, 2, 252, 252);
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    }
+
+    function initThreeEngine() {
+      const canvas = document.getElementById('game-canvas');
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x88b8dc);
+      scene.fog = new THREE.FogExp2(0x88b8dc, 0.0115);
+
+      camera = new THREE.PerspectiveCamera(WEAPON_CONFIG.baseFov, window.innerWidth / window.innerHeight, 0.05, 160);
+      camera.rotation.order = 'YXZ';
+      camera.position.copy(renderedCamPos);
+      scene.add(camera);
+
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.06;
+
+      const hemiLight = new THREE.HemisphereLight(0xf0f7ff, 0x6b5c4c, 0.72);
+      hemiLight.position.set(0, 45, 0);
+      scene.add(hemiLight);
+
+      const dirLight = new THREE.DirectionalLight(0xfff1dc, 1.05);
+      dirLight.position.set(24, 46, 20);
+      dirLight.castShadow = true;
+      dirLight.shadow.mapSize.width = 2048;
+      dirLight.shadow.mapSize.height = 2048;
+      dirLight.shadow.camera.near = 5;
+      dirLight.shadow.camera.far = 110;
+      const d = 35;
+      dirLight.shadow.camera.left = -d;
+      dirLight.shadow.camera.right = d;
+      dirLight.shadow.camera.top = d;
+      dirLight.shadow.camera.bottom = -d;
+      dirLight.shadow.bias = -0.0005;
+      scene.add(dirLight);
+
+      const rimLight = new THREE.DirectionalLight(0x7dd3fc, 0.28);
+      rimLight.position.set(-25, 22, -25);
+      scene.add(rimLight);
+
+      window.addEventListener('resize', onWindowResize);
+    }
+
+    function addToonOutline(mesh, opacity = 0.26) {
+      const edges = new THREE.EdgesGeometry(mesh.geometry);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x0f172a, transparent: true, opacity });
+      mesh.add(new THREE.LineSegments(edges, lineMat));
+    }
+
+    let texSand, texSlate, texCrate, texFloor;
+
+    function createStylizedBox(w, h, d, x, y, z, colorHex, isSolid = true, addOutline = true) {
+      let mapTex = null;
+      let roughness = 0.78;
+      let metalness = 0.08;
+      if (colorHex === 0xe6d7c1) { mapTex = texSand; roughness = 0.85; }
+      else if (colorHex === 0x2e3d4d) { mapTex = texSlate; roughness = 0.65; metalness = 0.18; }
+      else if (colorHex === 0xd96b38) { mapTex = texCrate; roughness = 0.6; metalness = 0.22; }
+
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({ color: colorHex, map: mapTex, roughness, metalness })
+      );
+      mesh.position.set(x, y + h / 2, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+
+      if (addOutline) addToonOutline(mesh, 0.25);
+
+      if (isSolid) {
+        colliders.push({
+          minX: x - w / 2, maxX: x + w / 2,
+          minY: y, maxY: y + h,
+          minZ: z - d / 2, maxZ: z + d / 2
+        });
+        mapVisuals.push({ x, z, w, d, isTall: h >= 3.0 });
+        mesh.userData.hitType = 'wall';
+        shootableMeshes.push(mesh);
+      }
+      return mesh;
+    }
+
+    function buildTacticalMap() {
+      texFloor = createProceduralSurfaceTexture('#d4c5af', '#9c8b75', 0.12);
+      texFloor.repeat.set(18, 18);
+      texSand  = createProceduralSurfaceTexture('#e6d7c1', '#bfa88a', 0.1);
+      texSand.repeat.set(2, 2);
+      texSlate = createProceduralSurfaceTexture('#2e3d4d', '#18222c', 0.14);
+      texSlate.repeat.set(3, 2);
+      texCrate = createProceduralSurfaceTexture('#d96b38', '#8c3b19', 0.12);
+
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(68, 72),
+        new THREE.MeshStandardMaterial({ color: 0xdfd2be, map: texFloor, roughness: 0.88, metalness: 0.05 })
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      floor.userData.hitType = 'wall';
+      scene.add(floor);
+      shootableMeshes.push(floor);
+
+      const gridHelper = new THREE.GridHelper(58, 29, 0x8f806c, 0xb5a895);
+      gridHelper.position.y = 0.01;
+      gridHelper.material.opacity = 0.35;
+      gridHelper.material.transparent = true;
+      scene.add(gridHelper);
+
+      const WALL_SAND  = 0xe6d7c1;
+      const WALL_SLATE = 0x2e3d4d;
+      const TEAL_A     = 0x268c82;
+      const BLUE_B     = 0x2b678a;
+      const CRATE_ORG  = 0xd96b38;
+      const mapW = MAP_BOUNDS.width;
+      const mapD = MAP_BOUNDS.depth;
+      const tallH = 6.2;
+
+      // 外周壁
+      createStylizedBox(mapW + 2, tallH, 1.6, 0, 0, -mapD / 2, WALL_SLATE);
+      createStylizedBox(mapW + 2, tallH, 1.6, 0, 0,  mapD / 2, WALL_SLATE);
+      createStylizedBox(1.6, tallH, mapD, -mapW / 2, 0, 0, WALL_SLATE);
+      createStylizedBox(1.6, tallH, mapD,  mapW / 2, 0, 0, WALL_SLATE);
+
+      // スポーン遮蔽＆ライン
+      createStylizedBox(8.4, 4.2, 1.6, 0, 0, 19.5, WALL_SAND);
+      createStylizedBox(15.0, 0.03, 0.3, 0, 0, 18.2, 0xff4655, false, false);
+      createStylizedBox(8.4, 4.2, 1.6, 0, 0, -19.5, WALL_SAND);
+      createStylizedBox(15.0, 0.03, 0.3, 0, 0, -18.2, 0x00d2be, false, false);
+
+      // レーン分離大壁
+      createStylizedBox(1.8, tallH, 21.8, -9.2, 0, 6.7, WALL_SLATE);
+      createStylizedBox(1.8, tallH, 13.0, -9.2, 0, -13.7, WALL_SLATE);
+      createStylizedBox(1.8, tallH, 21.8, 9.2, 0, 6.7, WALL_SLATE);
+      createStylizedBox(1.8, tallH, 13.0, 9.2, 0, -13.7, WALL_SLATE);
+
+      // 西レーン：Aメイン & Aサイト
+      createStylizedBox(5.2, 4.8, 1.6, -12.7, 0, 16.0, WALL_SAND);
+      createStylizedBox(4.4, 4.8, 1.6, -23.0, 0, 16.0, WALL_SAND);
+      createStylizedBox(2.2, 3.8, 2.2, -20.8, 0, 9.2, WALL_SAND);
+      createStylizedBox(1.8, 1.35, 1.8, -13.5, 0, 6.8, CRATE_ORG);
+      createStylizedBox(4.8, 4.8, 1.6, -22.8, 0, 1.5, WALL_SAND);
+      createStylizedBox(4.4, 4.8, 1.6, -12.3, 0, 1.5, WALL_SAND);
+      createStylizedBox(3.4, 2.6, 2.2, -18.0, 0, -6.2, TEAL_A);
+      createStylizedBox(1.8, 1.3, 1.8, -15.3, 0, -6.2, CRATE_ORG);
+
+      // ★ Aサイト：閉塞感のあるスパイク設置ポケット（入口を狭く制限）
+      createStylizedBox(1.4, 4.5, 6.8, -23.2, 0, -10.8, WALL_SLATE);
+      createStylizedBox(6.8, 4.5, 1.4, -19.8, 0, -14.2, WALL_SLATE);
+      createStylizedBox(1.4, 4.5, 4.6, -16.4, 0, -11.9, WALL_SLATE);
+      createStylizedBox(2.8, 4.5, 1.2, -21.8, 0, -7.8, WALL_SAND);
+
+      // 東レーン：Bメイン & Bサイト
+      createStylizedBox(5.2, 4.8, 1.6, 12.7, 0, 16.0, WALL_SAND);
+      createStylizedBox(4.4, 4.8, 1.6, 23.0, 0, 16.0, WALL_SAND);
+      createStylizedBox(2.2, 3.8, 2.2, 20.8, 0, 9.2, WALL_SAND);
+      createStylizedBox(1.8, 1.35, 1.8, 13.5, 0, 6.8, CRATE_ORG);
+      createStylizedBox(4.8, 4.8, 1.6, 22.8, 0, 1.5, WALL_SAND);
+      createStylizedBox(4.4, 4.8, 1.6, 12.3, 0, 1.5, WALL_SAND);
+      createStylizedBox(2.4, 2.6, 4.2, 17.8, 0, -6.2, BLUE_B);
+      createStylizedBox(1.8, 1.3, 1.8, 15.2, 0, -5.0, CRATE_ORG);
+
+      // ★ Bサイト：閉塞感のあるスパイク設置ポケット（入口を狭く制限）
+      createStylizedBox(1.4, 4.5, 6.8, 23.2, 0, -10.8, WALL_SLATE);
+      createStylizedBox(6.8, 4.5, 1.4, 19.8, 0, -14.2, WALL_SLATE);
+      createStylizedBox(1.4, 4.5, 4.6, 16.4, 0, -11.9, WALL_SLATE);
+      createStylizedBox(2.8, 4.5, 1.2, 21.8, 0, -7.8, WALL_SAND);
+
+      // 中央レーン：MID
+      createStylizedBox(2.2, 4.6, 1.5, -5.5, 0, 11.5, WALL_SAND);
+      createStylizedBox(2.2, 4.6, 1.5,  5.5, 0, 11.5, WALL_SAND);
+      createStylizedBox(2.5, 2.3, 2.5, 0, 0, 1.5, CRATE_ORG);
+      createStylizedBox(2.1, 1.35, 2.1, -2.3, 0, 1.5, TEAL_A);
+      createStylizedBox(2.3, 4.6, 1.6, -5.2, 0, -13.0, WALL_SAND);
+      createStylizedBox(2.3, 4.6, 1.6,  5.2, 0, -13.0, WALL_SAND);
+
+      // スパイク設置ゾーン登録＆発光フレーム床配置
+      plantZones.length = 0;
+      plantZones.push(
+        { id: 'A', x: -19.6, z: -11.0, radius: 2.3, coverLookX: -18.5, coverLookZ: -6.5 },
+        { id: 'B', x:  19.6, z: -11.0, radius: 2.3, coverLookX:  18.5, coverLookZ: -6.5 }
+      );
+
+      plantZones.forEach(pz => {
+        const pad = new THREE.Mesh(
+          new THREE.PlaneGeometry(4.2, 4.2),
+          new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.25, side: THREE.DoubleSide })
+        );
+        pad.rotation.x = -Math.PI / 2;
+        pad.position.set(pz.x, 0.025, pz.z);
+        scene.add(pad);
+      });
+
+      // 設置されるスパイク本体3Dモデル
+      spikeMesh = new THREE.Group();
+      const sCore = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.16, 0.22, 0.55, 8),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b, emissive: 0xff4655, emissiveIntensity: 0.6 })
+      );
+      sCore.position.y = 0.28;
+      const sRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.24, 0.03, 8, 20),
+        new THREE.MeshBasicMaterial({ color: 0x00ffcc })
+      );
+      sRing.rotation.x = Math.PI / 2;
+      sRing.position.y = 0.45;
+      spikeMesh.add(sCore, sRing);
+      spikeMesh.visible = false;
+      scene.add(spikeMesh);
+    }
+
+    function buildBuyPhaseBarriers() {
+      const barrierSpecs = [
+        // 攻撃側（南）Aサイト入口横壁(-23.0〜-12.7, Z=16.0)・MID・Bサイト入口横壁(12.7〜23.0, Z=16.0)の真ん中にはめ込み
+        { w: 5.5, h: 4.5, d: 0.45, x: -18.0, z: 16.0 },
+        { w: 16.6, h: 4.5, d: 0.45, x: 0.0, z: 18.2 },
+        { w: 5.5, h: 4.5, d: 0.45, x: 18.0, z: 16.0 },
+
+        // 防衛側（北）Aサイト側壁(-25.2〜-9.2, Z=-13.0)・MID横壁(-5.2〜5.2, Z=-13.0)・Bサイト側壁(9.2〜25.2, Z=-13.0)の真ん中にはめ込み
+        { w: 16.0, h: 4.5, d: 0.45, x: -17.2, z: -13.0 },
+        { w: 8.2, h: 4.5, d: 0.45, x: 0.0, z: -13.0 },
+        { w: 16.0, h: 4.5, d: 0.45, x: 17.2, z: -13.0 }
+      ];
+
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false
+      });
+
+      barrierSpecs.forEach((b) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), mat);
+        mesh.position.set(b.x, b.h / 2, b.z);
+        scene.add(mesh);
+        barrierMeshes.push(mesh);
+
+        const col = {
+          minX: b.x - b.w / 2, maxX: b.x + b.w / 2,
+          minY: 0, maxY: b.h,
+          minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2
+        };
+        barrierColliders.push(col);
+        colliders.push(col);
+      });
+    }
+
+    function setBarriersActive(active) {
+      barrierMeshes.forEach((m) => { m.visible = active; });
+      for (let i = 0; i < barrierColliders.length; i++) {
+        const b = barrierColliders[i];
+        const idx = colliders.indexOf(b);
+        if (active && idx === -1) colliders.push(b);
+        else if (!active && idx !== -1) colliders.splice(idx, 1);
+      }
+    }
+
+    function buildNavGraph() {
+      const coords = [
+        [0, 23], [-7, 22], [7, 22], [-15, 21], [15, 21],
+        [-17.5, 16.5], [-18.0, 11.5], [-16.5, 6.5], [-17.5, 1.5],
+        [-17.5, -3.5], [-14.2, -9.0], [-19.6, -11.0], [-18.5, -16.5],
+        [0, 14.5], [-3.2, 9.5], [3.2, 9.5], [-3.5, 4.5], [3.5, 4.5],
+        [-3.8, -1.5], [3.8, -1.5], [0, -6.5], [-2.8, -11.5], [2.8, -11.5],
+        [17.5, 16.5], [18.0, 11.5], [16.5, 6.5], [17.5, 1.5],
+        [17.5, -3.5], [14.2, -9.0], [19.6, -11.0], [18.5, -16.5],
+        [-9.2, -5.8], [9.2, -5.8],
+        [0, -23], [-8, -22], [8, -22]
+      ];
+
+      navNodes.length = 0;
+      coords.forEach(([x, z], idx) => {
+        navNodes.push({ id: idx, x, z, neighbors: [] });
+      });
+
+      for (let i = 0; i < navNodes.length; i++) {
+        for (let j = i + 1; j < navNodes.length; j++) {
+          const a = navNodes[i];
+          const b = navNodes[j];
+          const d = Math.hypot(a.x - b.x, a.z - b.z);
+          if (d <= 8.5 && isSegmentClearOfWalls(a.x, a.z, b.x, b.z)) {
+            a.neighbors.push({ id: j, dist: d });
+            b.neighbors.push({ id: i, dist: d });
+          }
+        }
+      }
+    }
+
+    function isSegmentClearOfWalls(x1, z1, x2, z2) {
+      const steps = Math.ceil(Math.hypot(x2 - x1, z2 - z1) / 0.45);
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        const px = x1 + (x2 - x1) * t;
+        const pz = z1 + (z2 - z1) * t;
+        for (let i = 0; i < colliders.length; i++) {
+          const box = colliders[i];
+          if (barrierColliders.includes(box)) continue;
+          if (box.maxY <= 0.5) continue;
+          if (px >= box.minX - 0.35 && px <= box.maxX + 0.35 &&
+              pz >= box.minZ - 0.35 && pz <= box.maxZ + 0.35) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    function findNearestNavNode(x, z) {
+      let best = navNodes[0];
+      let bestDist = Infinity;
+      for (let i = 0; i < navNodes.length; i++) {
+        const n = navNodes[i];
+        const d = (n.x - x) ** 2 + (n.z - z) ** 2;
+        if (d < bestDist) {
+          bestDist = d;
+          best = n;
+        }
+      }
+      return best;
+    }
+
+    function findNavPath(startId, goalId) {
+      if (startId === goalId) return [goalId];
+      const dist = new Array(navNodes.length).fill(Infinity);
+      const prev = new Array(navNodes.length).fill(-1);
+      const visited = new Array(navNodes.length).fill(false);
+      dist[startId] = 0;
+
+      for (let step = 0; step < navNodes.length; step++) {
+        let u = -1;
+        let best = Infinity;
+        for (let i = 0; i < navNodes.length; i++) {
+          if (!visited[i] && dist[i] < best) {
+            best = dist[i];
+            u = i;
+          }
+        }
+        if (u === -1 || u === goalId) break;
+        visited[u] = true;
+
+        const neighbors = navNodes[u].neighbors;
+        for (let k = 0; k < neighbors.length; k++) {
+          const nb = neighbors[k];
+          const alt = dist[u] + nb.dist;
+          if (alt < dist[nb.id]) {
+            dist[nb.id] = alt;
+            prev[nb.id] = u;
+          }
+        }
+      }
+
+      const path = [];
+      let curr = goalId;
+      while (curr !== -1 && curr !== startId) {
+        path.unshift(curr);
+        curr = prev[curr];
+      }
+      return path.length > 0 ? path : [goalId];
+    }
+
+    function buildFirstPersonWeapon() {
+      weaponPivot = new THREE.Group();
+      weaponPivot.position.set(0.24, -0.22, -0.38);
+      camera.add(weaponPivot);
+
+      gunGroup = new THREE.Group();
+      weaponPivot.add(gunGroup);
+
+      const matBodyDark   = new THREE.MeshStandardMaterial({ color: 0x1e2731, roughness: 0.45, metalness: 0.65 });
+      const matBodyRed    = new THREE.MeshStandardMaterial({ color: 0xff4655, roughness: 0.4, metalness: 0.35 });
+      const matBodySilver = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.3, metalness: 0.85 });
+      const matGlove      = new THREE.MeshStandardMaterial({ color: 0x26323f, roughness: 0.8, metalness: 0.1 });
+      const matSkin       = new THREE.MeshStandardMaterial({ color: 0xe8b89a, roughness: 0.7, metalness: 0.05 });
+
+      const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.058, 0.082, 0.36), matBodyDark);
+      addToonOutline(receiver);
+      gunGroup.add(receiver);
+
+      const topCover = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.022, 0.26), matBodyRed);
+      topCover.position.set(0, 0.048, 0.02);
+      addToonOutline(topCover);
+      gunGroup.add(topCover);
+
+      const handguard = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.058, 0.22), matBodyDark);
+      handguard.position.set(0, 0.005, -0.26);
+      addToonOutline(handguard);
+      gunGroup.add(handguard);
+
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.16, 10), matBodySilver);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.012, -0.43);
+      gunGroup.add(barrel);
+
+      const muzzleBrake = new THREE.Mesh(new THREE.BoxGeometry(0.026, 0.03, 0.045), matBodyDark);
+      muzzleBrake.position.set(0, 0.012, -0.51);
+      gunGroup.add(muzzleBrake);
+
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.14, 0.068), matBodyDark);
+      mag.position.set(0, -0.095, -0.06);
+      mag.rotation.x = 0.24;
+      addToonOutline(mag);
+      gunGroup.add(mag);
+
+      const sightBase = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.011, 0.075), matBodyDark);
+      sightBase.position.set(0, 0.064, 0.03);
+      gunGroup.add(sightBase);
+
+      const sightLeft = new THREE.Mesh(new THREE.BoxGeometry(0.0022, 0.028, 0.05), matBodyDark);
+      sightLeft.position.set(-0.018, 0.084, 0.03);
+      gunGroup.add(sightLeft);
+
+      const sightRight = new THREE.Mesh(new THREE.BoxGeometry(0.0022, 0.028, 0.05), matBodyDark);
+      sightRight.position.set(0.018, 0.084, 0.03);
+      gunGroup.add(sightRight);
+
+      const sightTop = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.0022, 0.05), matBodyRed);
+      sightTop.position.set(0, 0.099, 0.03);
+      gunGroup.add(sightTop);
+
+      const reticleGeo = new THREE.CircleGeometry(0.0014, 12);
+      const reticleMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, side: THREE.DoubleSide });
+      sightReticleMesh = new THREE.Mesh(reticleGeo, reticleMat);
+      sightReticleMesh.position.set(0, 0.085, 0.03);
+      gunGroup.add(sightReticleMesh);
+
+      const rightHand = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.075, 0.075), matGlove);
+      rightHand.position.set(0.008, -0.068, 0.095);
+      rightHand.rotation.x = -0.25;
+      gunGroup.add(rightHand);
+
+      const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.068, 0.24), matSkin);
+      rightArm.position.set(0.055, -0.11, 0.23);
+      rightArm.rotation.set(-0.22, -0.25, 0);
+      gunGroup.add(rightArm);
+
+      const leftHand = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.052, 0.085), matGlove);
+      leftHand.position.set(-0.015, -0.038, -0.22);
+      gunGroup.add(leftHand);
+
+      muzzlePoint = new THREE.Object3D();
+      muzzlePoint.position.set(0, 0.012, -0.55);
+      gunGroup.add(muzzlePoint);
+
+      muzzleFlashMesh = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.08, 0),
+        new THREE.MeshBasicMaterial({ color: 0xffdd55, transparent: true, opacity: 0.92 })
+      );
+      muzzleFlashMesh.position.copy(muzzlePoint.position);
+      muzzleFlashMesh.visible = false;
+      gunGroup.add(muzzleFlashMesh);
+    }
+
+    function createHumanoidAgent(config) {
+      const root = new THREE.Group();
+      root.position.set(config.spawnX, 0, config.spawnZ);
+      scene.add(root);
+
+      const bodyPivot = new THREE.Group();
+      root.add(bodyPivot);
+
+      const matSkin    = new THREE.MeshStandardMaterial({ color: config.skinColor, roughness: 0.65, metalness: 0.05 });
+      const matHair    = new THREE.MeshStandardMaterial({ color: config.hairColor, roughness: 0.6, metalness: 0.1 });
+      const matJacket  = new THREE.MeshStandardMaterial({ color: config.jacketColor, roughness: 0.55, metalness: 0.15 });
+      const matPants   = new THREE.MeshStandardMaterial({ color: config.pantsColor, roughness: 0.75, metalness: 0.1 });
+      const matAccent  = new THREE.MeshStandardMaterial({
+        color: config.accentColor,
+        emissive: config.accentColor,
+        emissiveIntensity: 0.28,
+        roughness: 0.4
+      });
+      const matBoots   = new THREE.MeshStandardMaterial({ color: 0x161c24, roughness: 0.8, metalness: 0.2 });
+      const matGun     = new THREE.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.4, metalness: 0.7 });
+
+      const hitMaterials = [matSkin, matJacket, matPants, matAccent];
+
+      const leftLegGroup = new THREE.Group();
+      leftLegGroup.position.set(-0.11, 0.86, 0);
+      bodyPivot.add(leftLegGroup);
+      const leftThigh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.44, 0.17), matPants);
+      leftThigh.position.y = -0.22;
+      leftThigh.castShadow = true;
+      addToonOutline(leftThigh);
+      leftLegGroup.add(leftThigh);
+      const leftBoot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.18), matBoots);
+      leftBoot.position.set(0, -0.65, 0.01);
+      leftBoot.castShadow = true;
+      leftLegGroup.add(leftBoot);
+
+      const rightLegGroup = new THREE.Group();
+      rightLegGroup.position.set(0.11, 0.86, 0);
+      bodyPivot.add(rightLegGroup);
+      const rightThigh = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.44, 0.17), matPants);
+      rightThigh.position.y = -0.22;
+      rightThigh.castShadow = true;
+      addToonOutline(rightThigh);
+      rightLegGroup.add(rightThigh);
+      const rightBoot = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.42, 0.18), matBoots);
+      rightBoot.position.set(0, -0.65, 0.01);
+      rightBoot.castShadow = true;
+      rightLegGroup.add(rightBoot);
+
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.56, 0.24), matJacket);
+      torso.position.y = 1.14;
+      torso.castShadow = true;
+      addToonOutline(torso);
+      bodyPivot.add(torso);
+
+      const chestTrim = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.08, 0.26), matAccent);
+      chestTrim.position.y = 1.28;
+      bodyPivot.add(chestTrim);
+
+      const coatTail = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.24, 0.26), matJacket);
+      coatTail.position.y = 0.82;
+      bodyPivot.add(coatTail);
+
+      const headGroup = new THREE.Group();
+      headGroup.position.set(0, 1.56, 0);
+      bodyPivot.add(headGroup);
+
+      const headMesh = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.25, 0.24), matSkin);
+      headMesh.castShadow = true;
+      addToonOutline(headMesh);
+      headGroup.add(headMesh);
+
+      const hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.09, 0.26), matHair);
+      hairTop.position.set(0, 0.13, -0.01);
+      headGroup.add(hairTop);
+
+      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.21, 0.05, 0.04), matAccent);
+      visor.position.set(0, 0.02, -0.125);
+      headGroup.add(visor);
+
+      const rightArmGroup = new THREE.Group();
+      rightArmGroup.position.set(0.27, 1.36, 0);
+      bodyPivot.add(rightArmGroup);
+      const rightArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.46, 0.13), matJacket);
+      rightArmMesh.position.set(0, -0.16, -0.14);
+      rightArmMesh.rotation.x = 1.15;
+      rightArmGroup.add(rightArmMesh);
+
+      const leftArmGroup = new THREE.Group();
+      leftArmGroup.position.set(-0.27, 1.36, 0);
+      bodyPivot.add(leftArmGroup);
+      const leftArmMesh = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.46, 0.13), matJacket);
+      leftArmMesh.position.set(0.06, -0.16, -0.22);
+      leftArmMesh.rotation.set(1.25, -0.35, 0);
+      leftArmGroup.add(leftArmMesh);
+
+      const rifle = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.08, 0.62), matGun);
+      rifle.position.set(0.14, 1.24, -0.34);
+      addToonOutline(rifle);
+      bodyPivot.add(rifle);
+
+      const botMuzzle = new THREE.Object3D();
+      botMuzzle.position.set(0.14, 1.26, -0.68);
+      bodyPivot.add(botMuzzle);
+
+      const agentObj = {
+        id: config.id,
+        name: config.name,
+        team: config.team,
+        root,
+        bodyPivot,
+        leftLegGroup,
+        rightLegGroup,
+        botMuzzle,
+        hitMaterials,
+        hp: 100,
+        shield: 50,
+        isDead: false,
+        kills: 0,
+        deaths: 0,
+        assists: 0,
+        spawnX: config.spawnX,
+        spawnZ: config.spawnZ,
+        path: [],
+        currentTargetNode: null,
+        goalNodeId: null,
+        aimYaw: config.team === 'enemy' ? 0 : Math.PI,
+        smoothedYaw: config.team === 'enemy' ? 0 : Math.PI,
+        scanOffsetYaw: 0,
+        scanTimer: 0.8 + Math.random() * 1.4,
+        campAnchor: new THREE.Vector3(config.spawnX, 0, config.spawnZ),
+        campTimer: 0,
+        lastKnownEnemyPos: null,
+        memoryTimer: 0,
+        coverVec: new THREE.Vector3(),
+        coverTimer: 0,
+        fireCooldown: 0.25 + Math.random() * 0.25,
+        burstRemaining: 0,
+        reactionTimer: 0,
+        strafeDir: Math.random() < 0.5 ? 1 : -1,
+        strafeTimer: 0.5 + Math.random() * 0.7,
+        walkPhase: Math.random() * Math.PI * 2,
+        hitFlashTimer: 0,
+        lastAttacker: null,
+        isRemoteControlled: false,
+        remoteUid: null,
+        targetRemotePos: null,
+        targetRemoteYaw: 0
+      };
+
+      const registerHitbox = (mesh, zone) => {
+        mesh.userData = { hitType: 'agent', zone, agent: agentObj };
+        shootableMeshes.push(mesh);
+      };
+      registerHitbox(headMesh, 'head');
+      registerHitbox(torso, 'body');
+      registerHitbox(coatTail, 'body');
+      registerHitbox(leftThigh, 'legs');
+      registerHitbox(rightThigh, 'legs');
+      registerHitbox(leftBoot, 'legs');
+      registerHitbox(rightBoot, 'legs');
+
+      return agentObj;
+    }
+
+    function spawnAllAgents() {
+      const specs = [
+        { id: 'ally_1', name: 'SAGE',  team: 'ally', spawnX: -5.5, spawnZ: 23.0, jacketColor: 0x1d4ed8, pantsColor: 0x0f172a, accentColor: 0x38bdf8, skinColor: 0xf1c27d, hairColor: 0x111827 },
+        { id: 'ally_2', name: 'SOVA',  team: 'ally', spawnX: -2.8, spawnZ: 24.2, jacketColor: 0x2563eb, pantsColor: 0x1e293b, accentColor: 0x60a5fa, skinColor: 0xe0ac69, hairColor: 0xfef08a },
+        { id: 'ally_3', name: 'BREACH',team: 'ally', spawnX:  2.8, spawnZ: 24.2, jacketColor: 0x1e40af, pantsColor: 0x172554, accentColor: 0x38bdf8, skinColor: 0xd99b66, hairColor: 0x9a3412 },
+        { id: 'ally_4', name: 'SKYE',  team: 'ally', spawnX:  5.5, spawnZ: 23.0, jacketColor: 0x0284c7, pantsColor: 0x0f172a, accentColor: 0x7dd3fc, skinColor: 0xf1c27d, hairColor: 0xb45309 },
+
+        { id: 'enemy_1', name: 'JETT',    team: 'enemy', spawnX: -6.0, spawnZ: -23.0, jacketColor: 0xdc2626, pantsColor: 0x18181b, accentColor: 0xff4655, skinColor: 0xf3d2b3, hairColor: 0xf8fafc },
+        { id: 'enemy_2', name: 'OMEN',    team: 'enemy', spawnX: -3.0, spawnZ: -24.2, jacketColor: 0x991b1b, pantsColor: 0x09090b, accentColor: 0xf87171, skinColor: 0x475569, hairColor: 0x0f172a },
+        { id: 'enemy_3', name: 'CHAMBER', team: 'enemy', spawnX:  0.0, spawnZ: -23.2, jacketColor: 0xb91c1c, pantsColor: 0x1c1917, accentColor: 0xfca5a5, skinColor: 0xe8b89a, hairColor: 0x451a03 },
+        { id: 'enemy_4', name: 'KILLJOY', team: 'enemy', spawnX:  3.0, spawnZ: -24.2, jacketColor: 0xe11d48, pantsColor: 0x18181b, accentColor: 0xff4655, skinColor: 0xf1c27d, hairColor: 0x1f2937 },
+        { id: 'enemy_5', name: 'VIPER',   team: 'enemy', spawnX:  6.0, spawnZ: -23.0, jacketColor: 0x7f1d1d, pantsColor: 0x09090b, accentColor: 0xef4444, skinColor: 0xd99b66, hairColor: 0x09090b }
+      ];
+
+      specs.forEach((s) => agents.push(createHumanoidAgent(s)));
+    }
+
+    function applyModeRosterNames() {
+      const allyDefaults = ['SAGE', 'SOVA', 'BREACH', 'SKYE'];
+      const enemyDefaults = ['JETT', 'OMEN', 'CHAMBER', 'KILLJOY', 'VIPER'];
+      const rankedNames = ['KAI_JP', 'ZERO_KR', 'NOVA_US', 'LUNA_EU', 'REX_BR', 'AKIRA_TW', 'SORA_SG', 'MIRA_DE', 'ZED_AU'];
+      const pass = (matchState.friendPasscode || 'ROOM').toUpperCase();
+
+      let aIdx = 0;
+      let eIdx = 0;
+      agents.forEach((ag, i) => {
+        if (ag.isRemoteControlled) return;
+        if (matchState.gameMode === 'ranked') {
+          ag.name = rankedNames[i % rankedNames.length];
+        } else if (matchState.gameMode === 'friend') {
+          if (ag.team === 'ally') ag.name = `FRIEND_${aIdx + 1} [${pass}]`;
+          else ag.name = `RIVAL_${eIdx + 1} [${pass}]`;
+        } else {
+          if (ag.team === 'ally') ag.name = allyDefaults[aIdx % allyDefaults.length];
+          else ag.name = enemyDefaults[eIdx % enemyDefaults.length];
+        }
+        if (ag.team === 'ally') aIdx++;
+        else eIdx++;
+      });
+
+      const modeBadge = document.getElementById('hud-mode-badge');
+      if (modeBadge) {
+        if (matchState.gameMode === 'ranked') modeBadge.textContent = `RANKED (${matchState.rankPoints} RP)`;
+        else if (matchState.gameMode === 'friend') modeBadge.textContent = `FRIEND: ${pass}`;
+        else modeBadge.textContent = 'CASUAL';
+      }
+    }
+
+    function setupLobbyModeUI() {
+      const modeCards = document.querySelectorAll('.mode-card');
+      const panelNone = document.getElementById('lobby-panel-none');
+      const panelCasual = document.getElementById('lobby-panel-casual');
+      const panelRanked = document.getElementById('lobby-panel-ranked');
+      const panelFriend = document.getElementById('lobby-panel-friend');
+      const btnStart = document.getElementById('btn-start-game');
+      const startText = document.getElementById('btn-start-text');
+      const startHint = document.getElementById('start-lobby-hint');
+
+      function updateStartBtnState() {
+        if (!matchState.gameMode) {
+          btnStart.disabled = true;
+          btnStart.className = 'w-full py-3.5 bg-slate-700/70 text-slate-400 font-bold text-base sm:text-lg tracking-widest val-btn-clip shadow-lg transition cursor-not-allowed';
+          startText.textContent = 'モードを選択してください';
+          startHint.textContent = '※ 上の3つのマッチモードから1つを選択すると開始できます';
+          return;
+        }
+        if (matchState.gameMode === 'ranked' && !matchState.isLobbyReady) {
+          btnStart.disabled = true;
+          btnStart.className = 'w-full py-3.5 bg-slate-700/70 text-slate-400 font-bold text-base sm:text-lg tracking-widest val-btn-clip shadow-lg transition cursor-not-allowed';
+          startText.textContent = '対戦相手を検索してください';
+          startHint.textContent = '※ 「対戦相手を検索」ボタンを押して世界中のロビーに接続してください';
+          return;
+        }
+        if (matchState.gameMode === 'friend' && !matchState.isLobbyReady) {
+          btnStart.disabled = true;
+          btnStart.className = 'w-full py-3.5 bg-slate-700/70 text-slate-400 font-bold text-base sm:text-lg tracking-widest val-btn-clip shadow-lg transition cursor-not-allowed';
+          startText.textContent = '合言葉を入力して入室してください';
+          startHint.textContent = '※ 友達と同じ合言葉を入力し「合言葉で入室」を押してください';
+          return;
+        }
+
+        btnStart.disabled = false;
+        btnStart.className = 'w-full py-3.5 bg-[#ff4655] hover:bg-[#ff5b68] active:scale-[0.99] text-white font-bold text-base sm:text-lg tracking-widest val-btn-clip shadow-lg transition cursor-pointer';
+        const labelMap = { casual: 'カジュアルマッチ開始', ranked: 'ランクマッチ出撃', friend: 'フレンドマッチ開始' };
+        startText.textContent = labelMap[matchState.gameMode] || 'マッチを開始する';
+        startHint.textContent = '準備完了！クリックして5v5バトルを開始します';
+      }
+
+      modeCards.forEach(card => {
+        card.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const mode = card.dataset.mode;
+          matchState.gameMode = mode;
+
+          modeCards.forEach(c => {
+            c.classList.remove('border-sky-400', 'border-amber-400', 'border-emerald-400', 'bg-white/15');
+            c.classList.add('border-white/20', 'bg-white/5');
+          });
+          card.classList.remove('border-white/20', 'bg-white/5');
+          card.classList.add('bg-white/15');
+          if (mode === 'casual') card.classList.add('border-sky-400');
+          if (mode === 'ranked') card.classList.add('border-amber-400');
+          if (mode === 'friend') card.classList.add('border-emerald-400');
+
+          panelNone.classList.add('hidden');
+          panelCasual.classList.add('hidden');
+          panelRanked.classList.add('hidden');
+          panelFriend.classList.add('hidden');
+
+          if (mode === 'casual') {
+            leaveOnlineRoom();
+            panelCasual.classList.remove('hidden');
+            matchState.isLobbyReady = true;
+            applyModeRosterNames();
+          } else if (mode === 'ranked') {
+            panelRanked.classList.remove('hidden');
+            matchState.isLobbyReady = false;
+          } else if (mode === 'friend') {
+            panelFriend.classList.remove('hidden');
+            matchState.isLobbyReady = false;
+          }
+          updateStartBtnState();
+        });
+      });
+
+      const btnFindRanked = document.getElementById('btn-find-ranked');
+      btnFindRanked.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const statusEl = document.getElementById('ranked-queue-status');
+        const rosterEl = document.getElementById('ranked-roster-preview');
+        btnFindRanked.disabled = true;
+        btnFindRanked.textContent = '検索中...';
+        statusEl.textContent = '世界中のリアルタイム対戦ロビー（GLOBAL_RANKED_01）へ接続中...';
+        rosterEl.classList.add('hidden');
+
+        joinOnlineRoom('GLOBAL_RANKED_01', (peers) => {
+          const liveCount = peers.length + 1;
+          statusEl.innerHTML = `<span class="text-emerald-400 font-bold">オンラインロビー接続完了！（現在 ${liveCount} 名のプレイヤーが接続中・残りはAIが自動補完）</span>`;
+        }).then(() => {
+          applyModeRosterNames();
+          const allies = agents.filter(a => a.team === 'ally').map(a => a.name).join(', ');
+          const enemies = agents.filter(a => a.team === 'enemy').map(a => a.name).join(', ');
+          rosterEl.innerHTML = `
+            <div class="bg-sky-500/15 border border-sky-400/30 p-2 rounded"><span class="text-sky-300 font-bold">ALLY:</span> YOU, ${allies}</div>
+            <div class="bg-red-500/15 border border-red-400/30 p-2 rounded"><span class="text-[#ff4655] font-bold">ENEMY:</span> ${enemies}</div>
+          `;
+          rosterEl.classList.remove('hidden');
+          btnFindRanked.disabled = false;
+          btnFindRanked.textContent = '再検索';
+          matchState.isLobbyReady = true;
+          updateStartBtnState();
+        });
+      });
+
+      const inputPass = document.getElementById('input-friend-passcode');
+      const btnJoinFriend = document.getElementById('btn-join-friend-room');
+      const btnCopyPass = document.getElementById('btn-copy-passcode');
+      const friendStatus = document.getElementById('friend-room-status');
+      const friendOnlineList = document.getElementById('friend-online-list');
+
+      btnCopyPass.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const val = inputPass.value.trim() || 'VALOR2026';
+        inputPass.value = val;
+        const temp = document.createElement('textarea');
+        temp.value = val;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+        friendStatus.innerHTML = `<span class="text-amber-300 font-bold">合言葉「${val}」をクリップボードにコピーしました！友達に共有してください。</span>`;
+      });
+
+      btnJoinFriend.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const val = inputPass.value.trim();
+        if (!val) {
+          friendStatus.innerHTML = '<span class="text-[#ff4655] font-bold">※ 合言葉を入力してください（例: VALOR2026）</span>';
+          return;
+        }
+        matchState.friendPasscode = val;
+        applyModeRosterNames();
+        friendStatus.innerHTML = `<span class="text-emerald-400 font-bold">合言葉「${val}」のリアルタイム通信ルームへ入室しました！</span>`;
+        friendOnlineList.classList.remove('hidden');
+        friendOnlineList.textContent = '参加中のメンバー: YOU（他の友達が同じ合言葉で入室すると自動で参加します）';
+
+        joinOnlineRoom(`FRIEND_${val}`, (peers) => {
+          if (peers.length > 0) {
+            const names = peers.map(p => p.name).join(', ');
+            friendOnlineList.textContent = `参加中のメンバー (${peers.length + 1}人): YOU, ${names}`;
+          } else {
+            friendOnlineList.textContent = '参加中のメンバー (1人): YOU（友達の入室を待機中・不足枠はAIが補完）';
+          }
+        });
+
+        matchState.isLobbyReady = true;
+        updateStartBtnState();
+      });
+    }
+
+    /**
+     * ============================================================================
+     * 5v5 ラウンド進行・5ラウンドごとの攻守交代・スパイク設置＆解除管理
+     * ============================================================================
+     */
+    function startRound(roundNum) {
+      matchState.roundNumber = roundNum;
+      matchState.phase = 'BUY';
+      matchState.phaseTimer = MATCH_CONFIG.buyPhaseTime;
+
+      const isSecondHalf = roundNum > MATCH_CONFIG.halfTimeRound;
+      matchState.playerSide = isSecondHalf ? 'DEF' : 'ATK';
+
+      const allyRoleEl = document.getElementById('hud-ally-role');
+      const enemyRoleEl = document.getElementById('hud-enemy-role');
+      if (allyRoleEl) allyRoleEl.textContent = matchState.playerSide;
+      if (enemyRoleEl) enemyRoleEl.textContent = matchState.playerSide === 'ATK' ? 'DEF' : 'ATK';
+
+      spikeState.planted = false;
+      spikeState.siteId = null;
+      spikeState.detonateTimer = 0;
+      spikeState.actionProgress = 0;
+      spikeState.activeActorName = null;
+      if (spikeMesh) spikeMesh.visible = false;
+      document.getElementById('spike-planted-banner').classList.add('hidden');
+      document.getElementById('spike-action-prompt').classList.add('hidden');
+
+      setBarriersActive(true);
+
+      const allyZSign = matchState.playerSide === 'ATK' ? 1 : -1;
+      const enemyZSign = -allyZSign;
+
+      player.hp = 100;
+      player.shield = 50;
+      player.isDead = false;
+      player.roundKills = 0;
+      player.isInteractingSpike = false;
+      player.position.set(0, 0, 23.0 * allyZSign);
+      player.velocity.set(0, 0, 0);
+      player.yaw = allyZSign > 0 ? 0 : Math.PI;
+      player.pitch = 0;
+      renderedYaw = player.yaw;
+      renderedPitch = 0;
+      recoilState.unrecoveredPitch = 0;
+      recoilState.unrecoveredYaw = 0;
+      renderedCamPos.set(0, PLAYER_CONFIG.eyeHeight, 23.0 * allyZSign);
+
+      weaponState.ammo = WEAPON_CONFIG.magSize;
+      weaponState.isReloading = false;
+      weaponState.isADS = false;
+      weaponState.isFiring = false;
+      weaponPivot.visible = true;
+      document.getElementById('reload-indicator').classList.add('hidden');
+      document.getElementById('spectator-banner').classList.add('hidden');
+      document.getElementById('round-end-banner').classList.add('hidden');
+
+      const allyXSlots = [-5.5, -2.8, 2.8, 5.5];
+      const enemyXSlots = [-6.0, -3.0, 0.0, 3.0, 6.0];
+      let aIdx = 0;
+      let eIdx = 0;
+
+      agents.forEach((ag) => {
+        ag.hp = 100;
+        ag.shield = 50;
+        ag.isDead = false;
+        ag.lastAttacker = null;
+        ag.bodyPivot.rotation.x = 0;
+        ag.root.visible = true;
+
+        const sx = ag.team === 'ally' ? allyXSlots[aIdx++] : enemyXSlots[eIdx++];
+        const sz = (ag.team === 'ally' ? 23.5 * allyZSign : 23.5 * enemyZSign);
+        ag.spawnX = sx;
+        ag.spawnZ = sz;
+        ag.root.position.set(sx, 0, sz);
+
+        const initYaw = (ag.team === 'ally' ? (allyZSign > 0 ? 0 : Math.PI) : (enemyZSign > 0 ? 0 : Math.PI));
+        ag.aimYaw = initYaw;
+        ag.smoothedYaw = initYaw;
+        ag.root.rotation.y = initYaw;
+
+        ag.path = [];
+        ag.currentTargetNode = null;
+        ag.goalNodeId = null;
+        ag.lastKnownEnemyPos = null;
+        ag.memoryTimer = 0;
+        ag.coverTimer = 0;
+        ag.campAnchor.set(sx, 0, sz);
+        ag.campTimer = 0;
+        ag.burstRemaining = 0;
+        ag.reactionTimer = 0.25 + Math.random() * 0.2;
+        ag.hitFlashTimer = 0;
+        ag.hitMaterials.forEach((m) => m.emissive.setHex(0x000000));
+        assignBotTacticalObjective(ag);
+      });
+
+      const buyBanner = document.getElementById('buy-phase-banner');
+      if (roundNum === MATCH_CONFIG.halfTimeRound + 1) {
+        buyBanner.querySelector('div:first-child').textContent = `HALF TIME — 攻守交代！（あなたは ${matchState.playerSide} 側）`;
+      } else {
+        buyBanner.querySelector('div:first-child').textContent = `BUY PHASE — あなたは ${matchState.playerSide} 側（バリア展開中）`;
+      }
+      buyBanner.classList.remove('hidden');
+      updateAmmoHUD();
+      updatePlayerHealthHUD();
+      updateScoreboardHUD();
+    }
+
+    function updateRoundLifecycle(dt) {
+      if (!isPlaying || matchState.matchOver) return;
+
+      if (matchState.phase === 'BUY') {
+        matchState.phaseTimer -= dt;
+        document.getElementById('buy-countdown-num').textContent = Math.max(1, Math.ceil(matchState.phaseTimer));
+        document.getElementById('round-phase-label').textContent = `R${matchState.roundNumber} BUY`;
+        document.getElementById('round-timer-text').textContent = formatTime(matchState.phaseTimer);
+
+        if (matchState.phaseTimer <= 0) {
+          matchState.phase = 'ACTIVE';
+          matchState.phaseTimer = MATCH_CONFIG.roundActiveTime;
+          setBarriersActive(false);
+          document.getElementById('buy-phase-banner').classList.add('hidden');
+        }
+        return;
+      }
+
+      if (matchState.phase === 'ACTIVE') {
+        if (spikeState.planted) {
+          spikeState.detonateTimer -= dt;
+          document.getElementById('spike-planted-banner').classList.remove('hidden');
+          document.getElementById('spike-detonate-timer').textContent = Math.max(0, spikeState.detonateTimer).toFixed(1);
+          document.getElementById('round-phase-label').textContent = `SITE ${spikeState.siteId} SPIKE`;
+          document.getElementById('round-timer-text').textContent = `${Math.max(0, Math.ceil(spikeState.detonateTimer))}s`;
+
+          if (spikeState.detonateTimer <= 0) {
+            const atkWon = matchState.playerSide === 'ATK';
+            endRound(atkWon ? 'ally' : 'enemy', 'SPIKE DETONATED');
+            return;
+          }
+        } else {
+          matchState.phaseTimer -= dt;
+          document.getElementById('round-phase-label').textContent = `ROUND ${matchState.roundNumber}`;
+          document.getElementById('round-timer-text').textContent = formatTime(matchState.phaseTimer);
+        }
+
+        updateSpikePlantAndDefuse(dt);
+
+        const allyAlive = (player.isDead ? 0 : 1) + agents.filter(a => a.team === 'ally' && !a.isDead).length;
+        const enemyAlive = agents.filter(a => a.team === 'enemy' && !a.isDead).length;
+
+        if (enemyAlive === 0) {
+          if (matchState.playerSide === 'ATK' || !spikeState.planted) {
+            endRound('ally', 'ENEMY TEAM ELIMINATED');
+            return;
+          }
+        }
+        if (allyAlive === 0) {
+          if (matchState.playerSide === 'DEF' || !spikeState.planted) {
+            endRound('enemy', 'ALLY TEAM ELIMINATED');
+            return;
+          }
+        }
+        if (!spikeState.planted && matchState.phaseTimer <= 0) {
+          const defWon = matchState.playerSide === 'DEF';
+          endRound(defWon ? 'ally' : 'enemy', 'TIME EXPIRED — DEFENCE WIN');
+          return;
+        }
+      } else if (matchState.phase === 'ROUND_END') {
+        matchState.phaseTimer -= dt;
+        if (matchState.phaseTimer <= 0) {
+          if (matchState.scoreAlly >= MATCH_CONFIG.roundsToWin || matchState.scoreEnemy >= MATCH_CONFIG.roundsToWin) {
+            finishMatch();
+          } else {
+            startRound(matchState.roundNumber + 1);
+          }
+        }
+      }
+    }
+
+    function updateSpikePlantAndDefuse(dt) {
+      const promptEl = document.getElementById('spike-action-prompt');
+      const titleEl = document.getElementById('spike-prompt-title');
+      const barEl = document.getElementById('spike-progress-bar');
+
+      let activeActor = null;
+      let mode = null;
+      let targetZone = null;
+
+      if (!spikeState.planted) {
+        if (matchState.playerSide === 'ATK' && !player.isDead) {
+          for (const pz of plantZones) {
+            if (Math.hypot(player.position.x - pz.x, player.position.z - pz.z) <= pz.radius) {
+              targetZone = pz;
+              if (player.isInteractingSpike) {
+                activeActor = player.name;
+                mode = 'PLANT';
+              }
+              break;
+            }
+          }
+        }
+
+        if (!activeActor) {
+          const atkBots = agents.filter(a => !a.isDead && ((matchState.playerSide === 'ATK' && a.team === 'ally') || (matchState.playerSide === 'DEF' && a.team === 'enemy')));
+          for (const bot of atkBots) {
+            for (const pz of plantZones) {
+              if (Math.hypot(bot.root.position.x - pz.x, bot.root.position.z - pz.z) <= pz.radius * 0.95) {
+                const enemyNear = agents.some(e => e.team !== bot.team && !e.isDead && e.root.position.distanceTo(bot.root.position) < 6.0);
+                if (!enemyNear) {
+                  activeActor = bot.name;
+                  mode = 'PLANT';
+                  targetZone = pz;
+                  break;
+                }
+              }
+            }
+            if (activeActor) break;
+          }
+        }
+      } else {
+        if (matchState.playerSide === 'DEF' && !player.isDead) {
+          if (Math.hypot(player.position.x - spikeState.position.x, player.position.z - spikeState.position.z) <= 2.4) {
+            targetZone = { id: spikeState.siteId };
+            if (player.isInteractingSpike) {
+              activeActor = player.name;
+              mode = 'DEFUSE';
+            }
+          }
+        }
+
+        if (!activeActor) {
+          const defBots = agents.filter(a => !a.isDead && ((matchState.playerSide === 'DEF' && a.team === 'ally') || (matchState.playerSide === 'ATK' && a.team === 'enemy')));
+          for (const bot of defBots) {
+            if (Math.hypot(bot.root.position.x - spikeState.position.x, bot.root.position.z - spikeState.position.z) <= 2.3) {
+              activeActor = bot.name;
+              mode = 'DEFUSE';
+              targetZone = { id: spikeState.siteId };
+              break;
+            }
+          }
+        }
+      }
+
+      if (activeActor && mode) {
+        const reqTime = mode === 'PLANT' ? MATCH_CONFIG.spikePlantTime : MATCH_CONFIG.spikeDefuseTime;
+        spikeState.actionProgress += dt;
+        spikeState.activeActorName = activeActor;
+        const pct = Math.min(100, (spikeState.actionProgress / reqTime) * 100);
+
+        promptEl.classList.remove('hidden');
+        titleEl.textContent = mode === 'PLANT'
+          ? `${activeActor} がサイト ${targetZone.id} にスパイク設置中...`
+          : `${activeActor} がスパイクを解除中...`;
+        barEl.style.width = `${pct}%`;
+
+        if (spikeState.actionProgress >= reqTime) {
+          if (mode === 'PLANT') {
+            completeSpikePlant(targetZone, activeActor);
+          } else {
+            promptEl.classList.add('hidden');
+            addKillfeedEntry(activeActor, 'SPIKE DEFUSED', true, matchState.playerSide === 'DEF');
+            const defWon = matchState.playerSide === 'DEF';
+            endRound(defWon ? 'ally' : 'enemy', 'SPIKE DEFUSED — DEFENCE WIN');
+          }
+        }
+      } else {
+        spikeState.actionProgress = 0;
+        spikeState.activeActorName = null;
+        if (targetZone && !player.isDead) {
+          promptEl.classList.remove('hidden');
+          titleEl.textContent = !spikeState.planted
+            ? `[F] または SPIKE 長押しでサイト ${targetZone.id} に設置`
+            : `[F] または SPIKE 長押しでスパイク解除`;
+          barEl.style.width = '0%';
+        } else {
+          promptEl.classList.add('hidden');
+        }
+      }
+    }
+
+    function completeSpikePlant(zone, planterName) {
+      spikeState.planted = true;
+      spikeState.siteId = zone.id;
+      spikeState.position.set(zone.x, 0, zone.z);
+      spikeState.detonateTimer = MATCH_CONFIG.spikeDetonateTime;
+      spikeState.actionProgress = 0;
+      spikeState.activeActorName = null;
+
+      if (spikeMesh) {
+        spikeMesh.position.set(zone.x, 0, zone.z);
+        spikeMesh.visible = true;
+      }
+      document.getElementById('spike-action-prompt').classList.add('hidden');
+      addKillfeedEntry(planterName, `${zone.id} SITE SPIKE PLANTED`, true, matchState.playerSide === 'ATK');
+      if (planterName === player.name) {
+        sendCombatEvent('SPIKE_PLANT', { siteId: zone.id, planterName: `Player_${(netState.userId || 'YOU').slice(0, 4).toUpperCase()}` });
+      }
+    }
+
+    function endRound(winnerTeam, reasonText) {
+      if (matchState.phase === 'ROUND_END') return;
+      matchState.phase = 'ROUND_END';
+      matchState.phaseTimer = MATCH_CONFIG.roundEndDelay;
+      document.getElementById('spike-action-prompt').classList.add('hidden');
+
+      if (winnerTeam === 'ally') matchState.scoreAlly++;
+      else matchState.scoreEnemy++;
+
+      updateScoreboardHUD();
+
+      const banner = document.getElementById('round-end-banner');
+      const box = document.getElementById('round-end-box');
+      const title = document.getElementById('round-end-title');
+      const sub = document.getElementById('round-end-sub');
+
+      sub.textContent = reasonText;
+      if (winnerTeam === 'ally') {
+        title.textContent = 'ROUND WON';
+        title.className = 'text-3xl sm:text-5xl font-black tracking-widest text-[#00ffcc]';
+        box.style.borderColor = '#00ffcc';
+      } else {
+        title.textContent = 'ROUND LOST';
+        title.className = 'text-3xl sm:text-5xl font-black tracking-widest text-[#ff4655]';
+        box.style.borderColor = '#ff4655';
+      }
+      banner.classList.remove('hidden');
+    }
+
+    function finishMatch() {
+      matchState.matchOver = true;
+      isPlaying = false;
+      weaponState.isFiring = false;
+      if (document.pointerLockElement) document.exitPointerLock();
+
+      const allyWon = matchState.scoreAlly >= MATCH_CONFIG.roundsToWin;
+      const titleEl = document.getElementById('match-over-title');
+      titleEl.textContent = allyWon ? 'VICTORY' : 'DEFEAT';
+      titleEl.className = allyWon
+        ? 'text-4xl sm:text-5xl font-black tracking-widest text-[#00ffcc] mb-2'
+        : 'text-4xl sm:text-5xl font-black tracking-widest text-[#ff4655] mb-2';
+
+      document.getElementById('match-over-score').textContent = `${matchState.scoreAlly} - ${matchState.scoreEnemy}`;
+
+      const rankDeltaEl = document.getElementById('match-over-rank-delta');
+      if (matchState.gameMode === 'ranked') {
+        const delta = allyWon ? 24 : -16;
+        matchState.rankPoints = Math.max(0, matchState.rankPoints + delta);
+        const tier = matchState.rankPoints >= 100 ? 'GOLD I' : (matchState.rankPoints >= 50 ? 'SILVER III' : 'SILVER II');
+        rankDeltaEl.textContent = `RANKED RESULT: ${delta > 0 ? '+' + delta : delta} RP → ${tier} (${matchState.rankPoints} RP)`;
+        rankDeltaEl.classList.remove('hidden');
+        document.getElementById('lobby-rank-pill').textContent = `RANK: ${tier} (${matchState.rankPoints} RP)`;
+      } else {
+        rankDeltaEl.classList.add('hidden');
+      }
+
+      const kd = player.deaths > 0 ? (player.kills / player.deaths).toFixed(2) : player.kills.toFixed(2);
+      document.getElementById('match-over-stats').innerHTML = `
+        <div class="flex justify-between"><span>あなたの戦績 (K / D / A)</span><span class="font-bold text-white">${player.kills} / ${player.deaths} / ${player.assists} (K/D: ${kd})</span></div>
+        <div class="flex justify-between"><span>総与ダメージ</span><span class="font-bold text-amber-300">${player.damageDealt} DMG</span></div>
+      `;
+
+      document.getElementById('match-over-overlay').classList.remove('hidden');
+    }
+
+    function formatTime(sec) {
+      const s = Math.max(0, Math.ceil(sec));
+      const m = Math.floor(s / 60);
+      const rem = s % 60;
+      return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+    }
+
+    /**
+     * ============================================================================
+     * 賢い戦術ボットAI（視線制限・視線障害物回避・ストッピング射撃・設置カバー）
+     * ============================================================================
+     */
+    function assignBotTacticalObjective(bot, preferredGoalId = null) {
+      const startNode = findNearestNavNode(bot.root.position.x, bot.root.position.z);
+      let goalId = preferredGoalId;
+
+      if (goalId === null) {
+        const botIsAtk = (bot.team === 'ally' && matchState.playerSide === 'ATK') ||
+                         (bot.team === 'enemy' && matchState.playerSide === 'DEF');
+
+        if (spikeState.planted) {
+          const siteNode = findNearestNavNode(spikeState.position.x, spikeState.position.z);
+          if (!botIsAtk) {
+            goalId = siteNode.id;
+          } else {
+            const holdNodes = [9, 10, 11, 27, 28, 29];
+            goalId = holdNodes[Math.floor(Math.random() * holdNodes.length)];
+          }
+        } else if (botIsAtk) {
+          const siteGoals = [11, 29, 10, 28, 20];
+          goalId = siteGoals[Math.floor(Math.random() * siteGoals.length)];
+        } else {
+          const defHoldGoals = [10, 12, 20, 28, 30, 31, 32];
+          goalId = defHoldGoals[Math.floor(Math.random() * defHoldGoals.length)];
+        }
+      }
+
+      bot.goalNodeId = goalId;
+      bot.path = findNavPath(startNode.id, goalId);
+      bot.currentTargetNode = bot.path.length > 0 ? navNodes[bot.path[0]] : navNodes[goalId];
+    }
+
+    function canBotPerceiveTarget(bot, tx, tz) {
+      const bx = bot.root.position.x;
+      const bz = bot.root.position.z;
+      const dx = tx - bx;
+      const dz = tz - bz;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 34) return false;
+
+      const angleToTarget = Math.atan2(-dx, -dz);
+      let angleDiff = angleToTarget - bot.aimYaw;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+      if (Math.abs(angleDiff) > Math.PI * 0.42) return false;
+      return isSegmentClearOfWalls(bx, bz, tx, tz);
+    }
+
+    function isRayBlockedByObstacle(ox, oz, dirX, dirZ, maxDist) {
+      const steps = Math.ceil(maxDist / 0.25);
+      for (let s = 1; s <= steps; s++) {
+        const d = (s / steps) * maxDist;
+        const px = ox + dirX * d;
+        const pz = oz + dirZ * d;
+        for (let i = 0; i < colliders.length; i++) {
+          const box = colliders[i];
+          if (box.maxY <= 0.35) continue;
+          if (px >= box.minX - 0.38 && px <= box.maxX + 0.38 &&
+              pz >= box.minZ - 0.38 && pz <= box.maxZ + 0.38) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    function computeVisionObstacleSteer(bot, desiredYaw) {
+      const bx = bot.root.position.x;
+      const bz = bot.root.position.z;
+      const lookDist = 1.65;
+
+      const fX = -Math.sin(desiredYaw);
+      const fZ = -Math.cos(desiredYaw);
+      const frontBlocked = isRayBlockedByObstacle(bx, bz, fX, fZ, lookDist);
+
+      if (!frontBlocked) {
+        return { yaw: desiredYaw, steered: false };
+      }
+
+      const candidateOffsets = [0.65, -0.65, 1.15, -1.15, 1.65, -1.65];
+      for (let i = 0; i < candidateOffsets.length; i++) {
+        const testYaw = desiredYaw + candidateOffsets[i];
+        const tX = -Math.sin(testYaw);
+        const tZ = -Math.cos(testYaw);
+        if (!isRayBlockedByObstacle(bx, bz, tX, tZ, lookDist)) {
+          return { yaw: testYaw, steered: true };
+        }
+      }
+
+      return { yaw: desiredYaw + Math.PI * 0.5 * bot.strafeDir, steered: true };
+    }
+
+    function normalizeAngleRad(a) {
+      while (a > Math.PI) a -= Math.PI * 2;
+      while (a < -Math.PI) a += Math.PI * 2;
+      return a;
+    }
+
+    function updateTacticalBots(dt) {
+      const canAct = isPlaying && matchState.phase === 'ACTIVE';
+
+      for (let i = 0; i < agents.length; i++) {
+        const bot = agents[i];
+
+        if (bot.hitFlashTimer > 0) {
+          bot.hitFlashTimer -= dt;
+          if (bot.hitFlashTimer <= 0 && !bot.isDead) {
+            bot.hitMaterials.forEach(m => m.emissive.setHex(0x000000));
+          }
+        }
+
+        if (bot.isDead) {
+          bot.bodyPivot.rotation.x = THREE.MathUtils.lerp(bot.bodyPivot.rotation.x, -Math.PI / 2, Math.min(1, dt * 10));
+          continue;
+        }
+
+        if (bot.isRemoteControlled && bot.targetRemotePos) {
+          const prevX = bot.root.position.x;
+          const prevZ = bot.root.position.z;
+          bot.root.position.lerp(bot.targetRemotePos, Math.min(1, dt * 14));
+          const diffYaw = normalizeAngleRad(bot.targetRemoteYaw - bot.smoothedYaw);
+          bot.smoothedYaw = normalizeAngleRad(bot.smoothedYaw + diffYaw * Math.min(1, dt * 14));
+          bot.root.rotation.y = bot.smoothedYaw;
+          bot.aimYaw = bot.smoothedYaw;
+
+          const moved = Math.hypot(bot.root.position.x - prevX, bot.root.position.z - prevZ);
+          if (moved > 0.005) {
+            bot.walkPhase += dt * 10.0;
+            const swing = Math.sin(bot.walkPhase) * 0.45;
+            bot.leftLegGroup.rotation.x = swing;
+            bot.rightLegGroup.rotation.x = -swing;
+          } else {
+            bot.leftLegGroup.rotation.x = 0;
+            bot.rightLegGroup.rotation.x = 0;
+          }
+          continue;
+        }
+
+        if (!canAct) continue;
+
+        let visibleTarget = null;
+        let visibleDist = Infinity;
+
+        if (bot.team === 'enemy' && !player.isDead) {
+          const d = Math.hypot(player.position.x - bot.root.position.x, player.position.z - bot.root.position.z);
+          if (canBotPerceiveTarget(bot, player.position.x, player.position.z)) {
+            visibleTarget = { type: 'player', x: player.position.x, y: player.position.y + 1.25, z: player.position.z, ref: player };
+            visibleDist = d;
+          }
+        }
+
+        for (let j = 0; j < agents.length; j++) {
+          const other = agents[j];
+          if (other.team === bot.team || other.isDead) continue;
+          const d = Math.hypot(other.root.position.x - bot.root.position.x, other.root.position.z - bot.root.position.z);
+          if (d < visibleDist && canBotPerceiveTarget(bot, other.root.position.x, other.root.position.z)) {
+            visibleTarget = { type: 'agent', x: other.root.position.x, y: 1.25, z: other.root.position.z, ref: other };
+            visibleDist = d;
+          }
+        }
+
+        if (visibleTarget) {
+          bot.lastKnownEnemyPos = new THREE.Vector3(visibleTarget.x, 0, visibleTarget.z);
+          bot.memoryTimer = 3.5;
+        } else if (bot.memoryTimer > 0) {
+          bot.memoryTimer -= dt;
+          if (bot.memoryTimer <= 0) bot.lastKnownEnemyPos = null;
+        }
+
+        let desiredMoveYaw = bot.aimYaw;
+        let moveSpeed = 0;
+        let desiredLookYaw = bot.aimYaw;
+        let isStoppingToShoot = false;
+
+        const botIsAtk = (bot.team === 'ally' && matchState.playerSide === 'ATK') ||
+                         (bot.team === 'enemy' && matchState.playerSide === 'DEF');
+
+        let isCoveringPlanter = false;
+        let isPlantingOrDefusingSelf = (spikeState.activeActorName === bot.name);
+
+        if (!visibleTarget && !isPlantingOrDefusingSelf && !spikeState.planted && botIsAtk) {
+          for (const pz of plantZones) {
+            const allyInPocket = (bot.team === 'ally' && !player.isDead && Math.hypot(player.position.x - pz.x, player.position.z - pz.z) <= pz.radius) ||
+              agents.some(a => a !== bot && a.team === bot.team && !a.isDead && Math.hypot(a.root.position.x - pz.x, a.root.position.z - pz.z) <= pz.radius);
+
+            if (allyInPocket && Math.hypot(bot.root.position.x - pz.x, bot.root.position.z - pz.z) < 9.5) {
+              isCoveringPlanter = true;
+              desiredLookYaw = Math.atan2(-(pz.coverLookX - bot.root.position.x), -(pz.coverLookZ - bot.root.position.z));
+              break;
+            }
+          }
+        }
+
+        if (visibleTarget) {
+          const dx = visibleTarget.x - bot.root.position.x;
+          const dz = visibleTarget.z - bot.root.position.z;
+          desiredLookYaw = Math.atan2(-dx, -dz);
+
+          const aimError = Math.abs(normalizeAngleRad(desiredLookYaw - bot.aimYaw));
+          if (aimError < 0.24 && bot.reactionTimer <= 0) {
+            isStoppingToShoot = true;
+            moveSpeed = 0;
+          } else {
+            bot.strafeTimer -= dt;
+            if (bot.strafeTimer <= 0) {
+              bot.strafeDir *= -1;
+              bot.strafeTimer = 0.55 + Math.random() * 0.55;
+            }
+            desiredMoveYaw = desiredLookYaw + (Math.PI * 0.5 * bot.strafeDir);
+            moveSpeed = 2.6;
+          }
+        } else if (isPlantingOrDefusingSelf) {
+          moveSpeed = 0;
+          desiredLookYaw = bot.aimYaw;
+        } else if (isCoveringPlanter) {
+          moveSpeed = 0;
+        } else if (bot.coverTimer > 0) {
+          bot.coverTimer -= dt;
+          desiredMoveYaw = Math.atan2(-bot.coverVec.x, -bot.coverVec.z);
+          moveSpeed = 3.9;
+        } else {
+          if (bot.lastKnownEnemyPos) {
+            const lkpNode = findNearestNavNode(bot.lastKnownEnemyPos.x, bot.lastKnownEnemyPos.z);
+            if (bot.goalNodeId !== lkpNode.id) assignBotTacticalObjective(bot, lkpNode.id);
+          }
+
+          if (!bot.currentTargetNode) assignBotTacticalObjective(bot);
+          const tn = bot.currentTargetNode;
+          const distToNode = Math.hypot(tn.x - bot.root.position.x, tn.z - bot.root.position.z);
+
+          if (distToNode < 1.35) {
+            if (bot.path.length > 0 && bot.path[0] === tn.id) bot.path.shift();
+            if (bot.path.length > 0) bot.currentTargetNode = navNodes[bot.path[0]];
+            else assignBotTacticalObjective(bot);
+          }
+
+          const activeNode = bot.currentTargetNode || tn;
+          const navYaw = Math.atan2(-(activeNode.x - bot.root.position.x), -(activeNode.z - bot.root.position.z));
+
+          const steerRes = computeVisionObstacleSteer(bot, navYaw);
+          desiredMoveYaw = steerRes.yaw;
+          moveSpeed = 3.9;
+
+          if (steerRes.steered) {
+            desiredLookYaw = desiredMoveYaw;
+          } else {
+            bot.scanTimer -= dt;
+            if (bot.scanTimer <= 0) {
+              bot.scanTimer = 1.4 + Math.random() * 1.4;
+              bot.scanOffsetYaw = (Math.random() - 0.5) * 0.42;
+            }
+            desiredLookYaw = desiredMoveYaw + bot.scanOffsetYaw;
+          }
+        }
+
+        if (moveSpeed > 0.2) {
+          const movedFromAnchor = Math.hypot(bot.root.position.x - bot.campAnchor.x, bot.root.position.z - bot.campAnchor.z);
+          if (movedFromAnchor > 2.2) {
+            bot.campAnchor.copy(bot.root.position);
+            bot.campTimer = 0;
+          } else {
+            bot.campTimer += dt;
+            if (bot.campTimer > 2.3) {
+              bot.campTimer = 0;
+              bot.campAnchor.copy(bot.root.position);
+              bot.strafeDir *= -1;
+              assignBotTacticalObjective(bot);
+            }
+          }
+        } else {
+          bot.campTimer = 0;
+        }
+
+        const maxTurnRate = 2.4;
+        const yawDiff = normalizeAngleRad(desiredLookYaw - bot.aimYaw);
+        const maxStep = maxTurnRate * dt;
+        bot.aimYaw = normalizeAngleRad(bot.aimYaw + Math.max(-maxStep, Math.min(maxStep, yawDiff)));
+
+        const smoothDiff = normalizeAngleRad(bot.aimYaw - bot.smoothedYaw);
+        bot.smoothedYaw = normalizeAngleRad(bot.smoothedYaw + smoothDiff * (1 - Math.exp(-9.5 * dt)));
+        bot.root.rotation.y = bot.smoothedYaw;
+
+        if (moveSpeed > 0) {
+          const stepX = -Math.sin(desiredMoveYaw) * moveSpeed * dt;
+          const stepZ = -Math.cos(desiredMoveYaw) * moveSpeed * dt;
+          bot.root.position.x += stepX;
+          bot.root.position.z += stepZ;
+          resolveBotCollisions(bot, i);
+
+          bot.walkPhase += dt * 9.0;
+          const swing = Math.sin(bot.walkPhase) * 0.45;
+          bot.leftLegGroup.rotation.x = swing;
+          bot.rightLegGroup.rotation.x = -swing;
+        } else {
+          bot.leftLegGroup.rotation.x = THREE.MathUtils.lerp(bot.leftLegGroup.rotation.x, 0, Math.min(1, dt * 10));
+          bot.rightLegGroup.rotation.x = THREE.MathUtils.lerp(bot.rightLegGroup.rotation.x, 0, Math.min(1, dt * 10));
+        }
+
+        if (visibleTarget) {
+          bot.reactionTimer = Math.max(0, bot.reactionTimer - dt);
+          bot.fireCooldown -= dt;
+
+          const aimError = Math.abs(normalizeAngleRad(desiredLookYaw - bot.aimYaw));
+          if (isStoppingToShoot && aimError < 0.16 && bot.reactionTimer <= 0 && bot.fireCooldown <= 0) {
+            if (bot.burstRemaining <= 0) bot.burstRemaining = 2 + Math.floor(Math.random() * 2);
+            executeBotShot(bot, visibleTarget, visibleDist);
+            bot.burstRemaining--;
+            bot.fireCooldown = bot.burstRemaining > 0 ? 0.14 : (0.58 + Math.random() * 0.35);
+          }
+        } else {
+          bot.reactionTimer = 0.34;
+          bot.burstRemaining = 0;
+        }
+      }
+    }
+
+    function resolveBotCollisions(bot, selfIndex) {
+      const r = PLAYER_CONFIG.radius;
+      const pos = bot.root.position;
+
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i < colliders.length; i++) {
+          const box = colliders[i];
+          if (box.maxY <= 0.1) continue;
+          const closestX = Math.max(box.minX, Math.min(pos.x, box.maxX));
+          const closestZ = Math.max(box.minZ, Math.min(pos.z, box.maxZ));
+          const dx = pos.x - closestX;
+          const dz = pos.z - closestZ;
+          const distSq = dx * dx + dz * dz;
+          if (distSq < r * r) {
+            const dist = Math.sqrt(distSq);
+            if (dist > 1e-6) {
+              const overlap = r - dist;
+              pos.x += (dx / dist) * overlap;
+              pos.z += (dz / dist) * overlap;
+            }
+          }
+        }
+      }
+
+      for (let j = 0; j < agents.length; j++) {
+        if (j === selfIndex || agents[j].isDead) continue;
+        const otherPos = agents[j].root.position;
+        const dx = pos.x - otherPos.x;
+        const dz = pos.z - otherPos.z;
+        const d = Math.hypot(dx, dz);
+        const minSep = r * 2.1;
+        if (d > 1e-4 && d < minSep) {
+          const push = (minSep - d) * 0.5;
+          pos.x += (dx / d) * push;
+          pos.z += (dz / d) * push;
+        }
+      }
+    }
+
+    function executeBotShot(bot, target, dist) {
+      const startPos = new THREE.Vector3();
+      bot.botMuzzle.getWorldPosition(startPos);
+
+      const soundDist = startPos.distanceTo(camera.position);
+      playGunshotSound(Math.max(0.05, 0.55 * (1 - soundDist / 45)));
+
+      const baseAcc = Math.max(0.10, 0.31 - dist * 0.006);
+      const isHit = Math.random() < baseAcc;
+      const isHead = isHit && Math.random() < 0.08;
+
+      const endPos = new THREE.Vector3(target.x, target.y + (isHead ? 0.25 : 0), target.z);
+      if (!isHit) {
+        endPos.x += (Math.random() - 0.5) * 1.6;
+        endPos.y += (Math.random() - 0.5) * 0.9;
+        endPos.z += (Math.random() - 0.5) * 1.6;
+      }
+
+      spawnHighSpeedTracer(startPos, endPos, bot.team === 'enemy' ? 0xff6b78 : 0x7dd3fc);
+
+      if (isHit) {
+        const dmg = isHead ? 110 : 32;
+        if (target.type === 'player') {
+          applyDamageToPlayer(dmg, bot);
+        } else if (target.type === 'agent') {
+          applyDamageToAgent(target.ref, dmg, isHead, endPos, bot);
+        }
+      }
+    }
+
+    function applyDamageToPlayer(amount, attacker) {
+      if (player.isDead || matchState.phase !== 'ACTIVE') return;
+
+      let remaining = amount;
+      if (player.shield > 0) {
+        const absorbed = Math.min(player.shield, Math.ceil(remaining * 0.66));
+        player.shield -= absorbed;
+        remaining -= absorbed;
+      }
+      player.hp = Math.max(0, player.hp - remaining);
+      updatePlayerHealthHUD();
+
+      const vig = document.getElementById('damage-vignette');
+      vig.style.opacity = '1';
+      clearTimeout(vig._timer);
+      vig._timer = setTimeout(() => { vig.style.opacity = '0'; }, 180);
+
+      if (player.hp <= 0) {
+        player.isDead = true;
+        player.deaths++;
+        weaponState.isFiring = false;
+        weaponState.isADS = false;
+        weaponPivot.visible = false;
+        if (attacker) attacker.kills++;
+        addKillfeedEntry(attacker ? attacker.name : 'ENEMY', player.name, amount >= 100, false);
+        updateScoreboardHUD();
+
+        const aliveAllies = agents.filter(a => a.team === 'ally' && !a.isDead);
+        if (aliveAllies.length > 0) {
+          player.spectateTargetIndex = 0;
+          document.getElementById('spectator-banner').classList.remove('hidden');
+        }
+      }
+    }
+
+    function applyDamageToAgent(agent, amount, isHead, hitPoint, attacker) {
+      if (agent.isDead || matchState.phase !== 'ACTIVE') return;
+
+      agent.lastAttacker = attacker;
+      agent.hitFlashTimer = 0.09;
+      agent.hitMaterials.forEach(m => m.emissive.setHex(0xffffff));
+
+      if (attacker === player) {
+        spawnDamagePopup(hitPoint, amount, isHead);
+      }
+
+      if (attacker) {
+        const ax = attacker === player ? player.position.x : attacker.root.position.x;
+        const az = attacker === player ? player.position.z : attacker.root.position.z;
+        agent.lastKnownEnemyPos = new THREE.Vector3(ax, 0, az);
+        agent.memoryTimer = 4.0;
+        agent.aimYaw = Math.atan2(-(ax - agent.root.position.x), -(az - agent.root.position.z));
+
+        const awayX = agent.root.position.x - ax;
+        const awayZ = agent.root.position.z - az;
+        const len = Math.hypot(awayX, awayZ) || 1;
+        agent.coverVec.set((awayX / len) * 0.5 - (awayZ / len) * 0.85 * agent.strafeDir, 0, (awayZ / len) * 0.5 + (awayX / len) * 0.85 * agent.strafeDir).normalize();
+        agent.coverTimer = 0.65;
+      }
+
+      let remaining = amount;
+      if (agent.shield > 0) {
+        const absorbed = Math.min(agent.shield, Math.ceil(remaining * 0.66));
+        agent.shield -= absorbed;
+        remaining -= absorbed;
+      }
+      agent.hp = Math.max(0, agent.hp - remaining);
+
+      if (agent.hp <= 0) {
+        agent.isDead = true;
+        agent.deaths++;
+        if (attacker) attacker.kills++;
+        spawnKillExplosionEffect(agent.root.position.clone(), isHead, attacker === player);
+        if (attacker === player) {
+          player.roundKills++;
+          triggerValorantKillBanner(player.roundKills, isHead);
+        }
+        const killerName = attacker ? attacker.name : 'AGENT';
+        const isAllyKill = attacker ? (attacker.team === 'ally') : false;
+        addKillfeedEntry(killerName, agent.name, isHead, isAllyKill);
+        updateScoreboardHUD();
+        return true;
+      }
+      return false;
+    }
+
+    /**
+     * 3D空間のキル達成エフェクト（光の柱・広がる衝撃波リング・上昇ダイヤモンドパーティクル）
+     */
+    function spawnKillExplosionEffect(pos, isHeadshot, isPlayerKill) {
+      const mainColor = isHeadshot ? 0xff4655 : (isPlayerKill ? 0x00ffcc : 0x38bdf8);
+      const subColor = isHeadshot ? 0xfde047 : 0xffffff;
+
+      // 1. 地面から立ち上る光のビーム柱
+      const pillarGeo = new THREE.CylinderGeometry(0.18, 0.55, 4.2, 16, 1, true);
+      const pillarMat = new THREE.MeshBasicMaterial({
+        color: mainColor,
+        transparent: true,
+        opacity: 0.72,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+      const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+      pillar.position.set(pos.x, 2.1, pos.z);
+      scene.add(pillar);
+
+      // 2. 足元から外へ広がる衝撃波リング
+      const ringGeo = new THREE.RingGeometry(0.25, 0.45, 24);
+      ringGeo.rotateX(-Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: subColor,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.position.set(pos.x, 0.08, pos.z);
+      scene.add(ring);
+
+      activeKillEffects.push({
+        pillar,
+        ring,
+        life: 0.65,
+        maxLife: 0.65
+      });
+
+      // 3. 放射状に舞い上がる発光クリスタル破片
+      const shardCount = isPlayerKill ? 18 : 8;
+      for (let i = 0; i < shardCount; i++) {
+        const shard = new THREE.Mesh(
+          new THREE.OctahedronGeometry(isHeadshot ? 0.075 : 0.055, 0),
+          new THREE.MeshBasicMaterial({ color: i % 2 === 0 ? mainColor : subColor })
+        );
+        shard.position.set(pos.x, 0.9 + Math.random() * 0.7, pos.z);
+        const angle = (Math.PI * 2 * i) / shardCount + Math.random() * 0.4;
+        const speed = 1.8 + Math.random() * 3.4;
+        const vel = new THREE.Vector3(
+          Math.cos(angle) * speed,
+          2.8 + Math.random() * 3.8,
+          Math.sin(angle) * speed
+        );
+        scene.add(shard);
+        activeSparks.push({ mesh: shard, vel, life: 0.55 });
+      }
+    }
+
+    function triggerValorantKillBanner(roundKillCount, isHeadshot) {
+      const clampedCount = Math.min(5, Math.max(1, roundKillCount));
+      const titles = ['SINGLE KILL', 'DOUBLE KILL', 'TRIPLE KILL', 'QUADRA KILL', 'ACE'];
+      const subs = ['1ST ELIMINATION', '2ND ELIMINATION', '3RD ELIMINATION', '4TH ELIMINATION', 'TEAM WIPE // 5 KILLS'];
+
+      playMultiKillBannerSound(clampedCount);
+
+      // 画面端シアン＆ゴールドフラッシュ
+      const killVig = document.getElementById('kill-vignette');
+      if (killVig) {
+        killVig.style.background = isHeadshot
+          ? 'radial-gradient(circle, transparent 58%, rgba(255, 70, 85, 0.52) 100%)'
+          : 'radial-gradient(circle, transparent 60%, rgba(0, 255, 204, 0.45) 100%)';
+        killVig.style.opacity = '1';
+        clearTimeout(killVig._timer);
+        killVig._timer = setTimeout(() => { killVig.style.opacity = '0'; }, 260);
+      }
+
+      const emblemEl = document.getElementById('val-kill-emblem');
+      const shockwaveEl = document.getElementById('val-kill-shockwave');
+      const hsCrownEl = document.getElementById('val-kill-hs-crown');
+      const countChipEl = document.getElementById('val-kill-count-chip');
+
+      if (isHeadshot) hsCrownEl.classList.remove('hidden');
+      else hsCrownEl.classList.add('hidden');
+
+      countChipEl.textContent = clampedCount === 5 ? 'ACE' : `${clampedCount} KILL`;
+      emblemEl.classList.remove('hidden', 'val-kill-pop');
+      emblemEl.classList.add('flex');
+      if (shockwaveEl) {
+        shockwaveEl.classList.remove('val-shockwave-anim');
+        void shockwaveEl.offsetWidth;
+        shockwaveEl.classList.add('val-shockwave-anim');
+      }
+      void emblemEl.offsetWidth;
+      emblemEl.classList.add('val-kill-pop');
+
+      clearTimeout(emblemEl._hideTimer);
+      emblemEl._hideTimer = setTimeout(() => {
+        emblemEl.classList.add('hidden');
+        emblemEl.classList.remove('flex');
+      }, 1900);
+
+      const bannerEl = document.getElementById('val-multikill-banner');
+      const titleEl = document.getElementById('val-multikill-title');
+      const subEl = document.getElementById('val-multikill-sub');
+      const pipsEl = document.getElementById('val-multikill-pips');
+
+      subEl.textContent = subs[clampedCount - 1];
+      titleEl.textContent = titles[clampedCount - 1];
+
+      if (clampedCount === 5) {
+        titleEl.className = 'text-3xl sm:text-5xl font-black tracking-[0.3em] text-amber-300 drop-shadow-[0_0_16px_rgba(251,191,36,0.95)]';
+      } else if (clampedCount >= 3) {
+        titleEl.className = 'text-2xl sm:text-4xl font-black tracking-[0.26em] text-[#00ffcc] drop-shadow-[0_0_14px_rgba(0,255,204,0.9)]';
+      } else {
+        titleEl.className = 'text-2xl sm:text-4xl font-black tracking-[0.26em] text-white drop-shadow-[0_0_12px_rgba(255,70,85,0.85)]';
+      }
+
+      let pipsHtml = '';
+      for (let i = 1; i <= 5; i++) {
+        const active = i <= clampedCount;
+        pipsHtml += `<span class="w-2.5 h-2.5 rotate-45 inline-block border ${active ? 'bg-[#ff4655] border-white shadow-[0_0_6px_#ff4655]' : 'bg-white/10 border-white/25'}"></span>`;
+      }
+      pipsEl.innerHTML = pipsHtml;
+
+      bannerEl.classList.remove('hidden', 'val-multikill-pop');
+      bannerEl.classList.add('flex');
+      void bannerEl.offsetWidth;
+      bannerEl.classList.add('val-multikill-pop');
+
+      clearTimeout(bannerEl._hideTimer);
+      bannerEl._hideTimer = setTimeout(() => {
+        bannerEl.classList.add('hidden');
+        bannerEl.classList.remove('flex');
+      }, 2400);
+    }
+
+    function spawnDamagePopup(worldPos, amount, isHead) {
+      const layer = document.getElementById('damage-popup-layer');
+      if (!layer) return;
+
+      const el = document.createElement('div');
+      el.className = 'damage-float';
+      el.style.color = isHead ? '#ff4655' : '#fde047';
+      el.style.fontSize = isHead ? '26px' : '21px';
+      el.textContent = isHead ? `★ -${amount}` : `-${amount}`;
+      layer.appendChild(el);
+
+      damagePopups.push({
+        el,
+        worldPos: worldPos.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.25, 0.22, (Math.random() - 0.5) * 0.25)),
+        life: 0.85,
+        maxLife: 0.85
+      });
+    }
+
+    function showCenterDamageReadout(amount, zone, isKill) {
+      const box = document.getElementById('center-damage-readout');
+      const valEl = document.getElementById('center-dmg-val');
+      const zoneEl = document.getElementById('center-dmg-zone');
+      if (!box || !valEl || !zoneEl) return;
+
+      const isHead = zone === 'head';
+      valEl.textContent = isKill ? `KILL! (-${amount})` : `-${amount}`;
+      valEl.className = isHead || isKill
+        ? 'text-xl sm:text-2xl font-black tracking-wider text-[#ff4655] drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]'
+        : 'text-xl sm:text-2xl font-black tracking-wider text-amber-300 drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]';
+      zoneEl.textContent = zone.toUpperCase();
+
+      box.style.opacity = '1';
+      clearTimeout(box._timer);
+      box._timer = setTimeout(() => { box.style.opacity = '0'; }, 550);
+    }
+
+    function addKillfeedEntry(killer, victim, isHead, isAllyKill) {
+      const container = document.getElementById('killfeed-list');
+      const row = document.createElement('div');
+      row.className = `px-2.5 py-1 rounded text-[11px] font-bold tracking-wider shadow-lg border backdrop-blur-xs flex items-center gap-1.5 ${
+        isAllyKill ? 'bg-[#0f1923]/90 border-sky-400/50 text-sky-300' : 'bg-[#0f1923]/90 border-[#ff4655]/60 text-rose-300'
+      }`;
+      row.innerHTML = `<span>${killer}</span><span class="text-amber-300">${isHead ? '⌖' : '→'}</span><span class="text-white">${victim}</span>`;
+      container.prepend(row);
+      while (container.children.length > 4) container.removeChild(container.lastChild);
+      setTimeout(() => { if (row.parentNode) row.remove(); }, 4500);
+    }
+
+    function updatePlayerHealthHUD() {
+      document.getElementById('hud-hp').textContent = player.hp;
+      document.getElementById('hud-shield').textContent = player.shield;
+    }
+
+    function updateScoreboardHUD() {
+      document.getElementById('score-ally').textContent = matchState.scoreAlly;
+      document.getElementById('score-enemy').textContent = matchState.scoreEnemy;
+      document.getElementById('sb-score-ally').textContent = matchState.scoreAlly;
+      document.getElementById('sb-score-enemy').textContent = matchState.scoreEnemy;
+
+      const allyDots = document.getElementById('ally-alive-dots');
+      const enemyDots = document.getElementById('enemy-alive-dots');
+      const allyStatus = [!player.isDead, ...agents.filter(a => a.team === 'ally').map(a => !a.isDead)];
+      const enemyStatus = agents.filter(a => a.team === 'enemy').map(a => !a.isDead);
+
+      allyDots.innerHTML = allyStatus.map(alive =>
+        `<span class="w-2.5 h-3.5 rounded-xs ${alive ? 'bg-sky-400' : 'bg-slate-600/50'}"></span>`
+      ).join('');
+      enemyDots.innerHTML = enemyStatus.map(alive =>
+        `<span class="w-2.5 h-3.5 rounded-xs ${alive ? 'bg-[#ff4655]' : 'bg-slate-600/50'}"></span>`
+      ).join('');
+
+      const allyRows = [player, ...agents.filter(a => a.team === 'ally')];
+      const enemyRows = agents.filter(a => a.team === 'enemy');
+
+      document.getElementById('sb-ally-rows').innerHTML = allyRows.map(m => `
+        <div class="flex items-center justify-between px-2.5 py-1.5 rounded ${m.isDead ? 'bg-white/5 text-slate-500' : 'bg-sky-500/15 text-white'}">
+          <span class="font-bold">${m.name}</span>
+          <span class="font-mono">${m.kills} / ${m.deaths} / ${m.assists}</span>
+        </div>
+      `).join('');
+
+      document.getElementById('sb-enemy-rows').innerHTML = enemyRows.map(m => `
+        <div class="flex items-center justify-between px-2.5 py-1.5 rounded ${m.isDead ? 'bg-white/5 text-slate-500' : 'bg-red-500/15 text-white'}">
+          <span class="font-bold">${m.name}</span>
+          <span class="font-mono">${m.kills} / ${m.deaths} / ${m.assists}</span>
+        </div>
+      `).join('');
+    }
+
+    function cycleSpectateTarget() {
+      const aliveAllies = agents.filter(a => a.team === 'ally' && !a.isDead);
+      if (aliveAllies.length === 0) return;
+      player.spectateTargetIndex = (player.spectateTargetIndex + 1) % aliveAllies.length;
+    }
+
+    /**
+     * ============================================================================
+     * プレイヤー操作・感度＆配置設定UI
+     * ============================================================================
+     */
+    function setupControls() {
+      const startOverlay = document.getElementById('start-overlay');
+      const btnStart = document.getElementById('btn-start-game');
+      const btnToggleSb = document.getElementById('btn-toggle-scoreboard');
+      const btnCloseSb = document.getElementById('btn-close-scoreboard');
+      const sbOverlay = document.getElementById('scoreboard-overlay');
+      const btnRematch = document.getElementById('btn-rematch');
+      const specBanner = document.getElementById('spectator-banner');
+      const canvas = document.getElementById('game-canvas');
+
+      isMobileDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0) || window.innerWidth <= 900;
+      if (isMobileDevice) document.getElementById('mobile-controls').classList.remove('hidden');
+
+      window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+      btnStart.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!matchState.gameMode || !matchState.isLobbyReady) return;
+        initAudio();
+        applyModeRosterNames();
+        startOverlay.classList.add('hidden');
+        isPlaying = true;
+        startRound(1);
+        if (!isMobileDevice && canvas.requestPointerLock) canvas.requestPointerLock();
+      });
+
+      btnRematch.addEventListener('click', (e) => {
+        e.stopPropagation();
+        leaveOnlineRoom();
+        matchState.scoreAlly = 0;
+        matchState.scoreEnemy = 0;
+        matchState.matchOver = false;
+        player.kills = 0;
+        player.deaths = 0;
+        player.assists = 0;
+        player.damageDealt = 0;
+        agents.forEach(a => { a.kills = 0; a.deaths = 0; a.assists = 0; });
+        document.getElementById('match-over-overlay').classList.add('hidden');
+        startOverlay.classList.remove('hidden');
+      });
+
+      specBanner.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (player.isDead) cycleSpectateTarget();
+      });
+
+      const toggleScoreboard = (forceState) => {
+        updateScoreboardHUD();
+        if (typeof forceState === 'boolean') sbOverlay.classList.toggle('hidden', !forceState);
+        else sbOverlay.classList.toggle('hidden');
+      };
+      btnToggleSb.addEventListener('click', (e) => { e.stopPropagation(); toggleScoreboard(); });
+      document.getElementById('top-scoreboard-bar').addEventListener('click', (e) => { e.stopPropagation(); toggleScoreboard(); });
+      btnCloseSb.addEventListener('click', (e) => { e.stopPropagation(); toggleScoreboard(false); });
+
+      canvas.addEventListener('mousedown', (e) => {
+        initAudio();
+        if (!isPlaying || isSettingsOpen || isHudEditing) return;
+
+        if (player.isDead) {
+          cycleSpectateTarget();
+          return;
+        }
+
+        if (!isMobileDevice && document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+          canvas.requestPointerLock();
+        }
+        const code = `Mouse${e.button}`;
+        if (code === userSettings.keybinds.fire) weaponState.isFiring = true;
+        if (code === userSettings.keybinds.ads) weaponState.isADS = true;
+      });
+
+      window.addEventListener('mouseup', (e) => {
+        const code = `Mouse${e.button}`;
+        if (code === userSettings.keybinds.fire) weaponState.isFiring = false;
+        if (code === userSettings.keybinds.ads) weaponState.isADS = false;
+      });
+
+      document.addEventListener('mousemove', (e) => {
+        if (document.pointerLockElement === canvas && !player.isDead && !isSettingsOpen) {
+          const baseSens = PLAYER_CONFIG.baseMouseSensitivity * userSettings.mouseSensMultiplier;
+          const sens = baseSens * (weaponState.isADS ? userSettings.adsSensMultiplier : 1.0);
+          player.yaw -= e.movementX * sens;
+          player.pitch -= e.movementY * sens;
+          if (e.movementY > 0 && recoilState.unrecoveredPitch > 0) {
+            recoilState.unrecoveredPitch = Math.max(0, recoilState.unrecoveredPitch - e.movementY * sens);
+          }
+          const maxPitch = Math.PI / 2 - 0.05;
+          player.pitch = Math.max(-maxPitch, Math.min(maxPitch, player.pitch));
+        }
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (listeningAction) {
+          e.preventDefault();
+          userSettings.keybinds[listeningAction] = e.code;
+          listeningAction = null;
+          renderKeybindList();
+          return;
+        }
+
+        if (e.code === 'Tab') {
+          e.preventDefault();
+          toggleScoreboard(true);
+          return;
+        }
+        if (e.code === 'Space' && player.isDead && isPlaying) {
+          e.preventDefault();
+          cycleSpectateTarget();
+          return;
+        }
+
+        const kb = userSettings.keybinds;
+        if (e.code === kb.forward) actionKeys.forward = true;
+        if (e.code === kb.backward) actionKeys.backward = true;
+        if (e.code === kb.left) actionKeys.left = true;
+        if (e.code === kb.right) actionKeys.right = true;
+        if (e.code === kb.jump) actionKeys.jump = true;
+        if (e.code === kb.walk) actionKeys.walk = true;
+        if (e.code === kb.reload) startReload();
+        if (e.code === kb.interact) player.isInteractingSpike = true;
+      });
+
+      window.addEventListener('keyup', (e) => {
+        if (e.code === 'Tab') {
+          e.preventDefault();
+          toggleScoreboard(false);
+          return;
+        }
+        const kb = userSettings.keybinds;
+        if (e.code === kb.forward) actionKeys.forward = false;
+        if (e.code === kb.backward) actionKeys.backward = false;
+        if (e.code === kb.left) actionKeys.left = false;
+        if (e.code === kb.right) actionKeys.right = false;
+        if (e.code === kb.jump) actionKeys.jump = false;
+        if (e.code === kb.walk) actionKeys.walk = false;
+        if (e.code === kb.interact) player.isInteractingSpike = false;
+      });
+
+      // スマホ用タッチ操作
+      const joyZone = document.getElementById('joystick-zone');
+      const joyKnob = document.getElementById('joystick-knob');
+      const lookZone = document.getElementById('look-zone');
+
+      joyZone.addEventListener('touchstart', (e) => {
+        if (isHudEditing) return;
+        e.preventDefault();
+        const touch = e.changedTouches[0];
+        touchInput.joystickId = touch.identifier;
+        updateJoystick(touch, joyZone, joyKnob);
+      }, { passive: false });
+
+      joyZone.addEventListener('touchmove', (e) => {
+        if (isHudEditing) return;
+        e.preventDefault();
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const touch = e.changedTouches[i];
+          if (touch.identifier === touchInput.joystickId) updateJoystick(touch, joyZone, joyKnob);
+        }
+      }, { passive: false });
+
+      const resetJoystick = (e) => {
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          if (e.changedTouches[i].identifier === touchInput.joystickId) {
+            touchInput.joystickId = null;
+            touchInput.moveX = 0;
+            touchInput.moveY = 0;
+            joyKnob.style.transform = 'translate(0px, 0px)';
+          }
+        }
+      };
+      joyZone.addEventListener('touchend', resetJoystick);
+      joyZone.addEventListener('touchcancel', resetJoystick);
+
+      lookZone.addEventListener('touchstart', (e) => {
+        if (isHudEditing) return;
+        e.preventDefault();
+        if (player.isDead) {
+          cycleSpectateTarget();
+          return;
+        }
+        const touch = e.changedTouches[0];
+        touchInput.lookId = touch.identifier;
+        touchInput.lastLookX = touch.clientX;
+        touchInput.lastLookY = touch.clientY;
+      }, { passive: false });
+
+      lookZone.addEventListener('touchmove', (e) => {
+        if (isHudEditing || player.isDead) return;
+        e.preventDefault();
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const touch = e.changedTouches[i];
+          if (touch.identifier === touchInput.lookId) {
+            const dx = touch.clientX - touchInput.lastLookX;
+            const dy = touch.clientY - touchInput.lastLookY;
+            touchInput.lastLookX = touch.clientX;
+            touchInput.lastLookY = touch.clientY;
+
+            const baseSens = PLAYER_CONFIG.baseTouchSensitivity * userSettings.touchSensMultiplier;
+            const sens = baseSens * (weaponState.isADS ? userSettings.adsSensMultiplier : 1.0);
+            player.yaw -= dx * sens;
+            player.pitch -= dy * sens;
+            if (dy > 0 && recoilState.unrecoveredPitch > 0) {
+              recoilState.unrecoveredPitch = Math.max(0, recoilState.unrecoveredPitch - dy * sens);
+            }
+            const maxPitch = Math.PI / 2 - 0.05;
+            player.pitch = Math.max(-maxPitch, Math.min(maxPitch, player.pitch));
+          }
+        }
+      }, { passive: false });
+
+      const resetLook = (e) => {
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          if (e.changedTouches[i].identifier === touchInput.lookId) touchInput.lookId = null;
+        }
+      };
+      lookZone.addEventListener('touchend', resetLook);
+      lookZone.addEventListener('touchcancel', resetLook);
+
+      const btnFire = document.getElementById('btn-mobile-fire');
+      btnFire.addEventListener('touchstart', (e) => { if (!isHudEditing) { e.preventDefault(); initAudio(); weaponState.isFiring = true; } }, { passive: false });
+      btnFire.addEventListener('touchend', (e) => { if (!isHudEditing) { e.preventDefault(); weaponState.isFiring = false; } });
+      btnFire.addEventListener('touchcancel', () => { weaponState.isFiring = false; });
+
+      const btnAds = document.getElementById('btn-mobile-ads');
+      btnAds.addEventListener('touchstart', (e) => {
+        if (isHudEditing) return;
+        e.preventDefault();
+        weaponState.isADS = !weaponState.isADS;
+        btnAds.classList.toggle('bg-sky-500/80', weaponState.isADS);
+      }, { passive: false });
+
+      const btnSpike = document.getElementById('btn-mobile-spike');
+      btnSpike.addEventListener('touchstart', (e) => { if (!isHudEditing) { e.preventDefault(); player.isInteractingSpike = true; } }, { passive: false });
+      btnSpike.addEventListener('touchend', () => { player.isInteractingSpike = false; });
+      btnSpike.addEventListener('touchcancel', () => { player.isInteractingSpike = false; });
+
+      document.getElementById('btn-mobile-reload').addEventListener('touchstart', (e) => { if (!isHudEditing) { e.preventDefault(); initAudio(); startReload(); } }, { passive: false });
+      const btnJump = document.getElementById('btn-mobile-jump');
+      btnJump.addEventListener('touchstart', (e) => { if (!isHudEditing) { e.preventDefault(); actionKeys.jump = true; } }, { passive: false });
+      btnJump.addEventListener('touchend', () => { actionKeys.jump = false; });
+
+      const btnWalk = document.getElementById('btn-mobile-walk');
+      btnWalk.addEventListener('touchstart', (e) => {
+        if (isHudEditing) return;
+        e.preventDefault();
+        player.isWalkingSlow = !player.isWalkingSlow;
+        btnWalk.classList.toggle('bg-emerald-500/80', player.isWalkingSlow);
+      }, { passive: false });
+    }
+
+    function setupSettingsUI() {
+      const settingsModal = document.getElementById('settings-modal');
+      const btnOpen = document.getElementById('btn-open-settings');
+      const btnStartOpen = document.getElementById('btn-start-open-settings');
+      const btnClose = document.getElementById('btn-close-settings');
+
+      const openModal = (e) => {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        isSettingsOpen = true;
+        weaponState.isFiring = false;
+        weaponState.isADS = false;
+        if (document.pointerLockElement) document.exitPointerLock();
+        settingsModal.classList.remove('hidden');
+        settingsModal.classList.add('flex');
+        renderKeybindList();
+      };
+
+      const closeModal = (e) => {
+        if (e) { e.preventDefault(); e.stopPropagation(); }
+        isSettingsOpen = false;
+        listeningAction = null;
+        settingsModal.classList.add('hidden');
+        settingsModal.classList.remove('flex');
+        const canvas = document.getElementById('game-canvas');
+        if (isPlaying && !isMobileDevice && canvas.requestPointerLock) {
+          canvas.requestPointerLock();
+        }
+      };
+
+      btnOpen.addEventListener('click', openModal);
+      btnStartOpen.addEventListener('click', openModal);
+      btnClose.addEventListener('click', closeModal);
+
+      const sMouse = document.getElementById('slider-mouse-sens');
+      const sTouch = document.getElementById('slider-touch-sens');
+      const sAds   = document.getElementById('slider-ads-sens');
+
+      sMouse.addEventListener('input', () => {
+        userSettings.mouseSensMultiplier = parseFloat(sMouse.value);
+        document.getElementById('val-mouse-sens').textContent = userSettings.mouseSensMultiplier.toFixed(2);
+      });
+      sTouch.addEventListener('input', () => {
+        userSettings.touchSensMultiplier = parseFloat(sTouch.value);
+        document.getElementById('val-touch-sens').textContent = userSettings.touchSensMultiplier.toFixed(2);
+      });
+      sAds.addEventListener('input', () => {
+        userSettings.adsSensMultiplier = parseFloat(sAds.value);
+        document.getElementById('val-ads-sens').textContent = userSettings.adsSensMultiplier.toFixed(2);
+      });
+
+      document.getElementById('btn-reset-keybinds').addEventListener('click', (e) => {
+        e.stopPropagation();
+        userSettings.keybinds = { ...DEFAULT_KEYBINDS };
+        listeningAction = null;
+        renderKeybindList();
+      });
+
+      window.addEventListener('mousedown', (e) => {
+        if (listeningAction && e.target.closest('#keybind-list') === null) {
+          e.preventDefault();
+          userSettings.keybinds[listeningAction] = `Mouse${e.button}`;
+          listeningAction = null;
+          renderKeybindList();
+        }
+      });
+
+      const hudEditor = document.getElementById('hud-layout-editor');
+      const mobileControls = document.getElementById('mobile-controls');
+
+      document.getElementById('btn-open-hud-editor').addEventListener('click', (e) => {
+        e.stopPropagation();
+        settingsModal.classList.add('hidden');
+        settingsModal.classList.remove('flex');
+        isHudEditing = true;
+        mobileControls.classList.remove('hidden');
+        hudEditor.classList.remove('hidden');
+      });
+
+      document.getElementById('btn-hud-reset-default').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const defaults = {
+          joystick: { left: '24px', top: 'calc(100vh - 152px)' },
+          spike:    { left: 'calc(50vw - 44px)', top: 'calc(100vh - 140px)' },
+          reload:   { left: 'calc(100vw - 148px)', top: 'calc(100vh - 216px)' },
+          ads:      { left: 'calc(100vw - 84px)', top: 'calc(100vh - 220px)' },
+          walk:     { left: 'calc(100vw - 228px)', top: 'calc(100vh - 132px)' },
+          jump:     { left: 'calc(100vw - 168px)', top: 'calc(100vh - 136px)' },
+          fire:     { left: 'calc(100vw - 104px)', top: 'calc(100vh - 148px)' }
+        };
+        document.querySelectorAll('.mobile-hud-item').forEach((el) => {
+          const id = el.dataset.hudId;
+          if (defaults[id]) {
+            el.style.left = defaults[id].left;
+            el.style.top = defaults[id].top;
+          }
+        });
+      });
+
+      document.getElementById('btn-hud-save-exit').addEventListener('click', (e) => {
+        e.stopPropagation();
+        isHudEditing = false;
+        hudEditor.classList.add('hidden');
+        if (!isMobileDevice) mobileControls.classList.add('hidden');
+        settingsModal.classList.remove('hidden');
+        settingsModal.classList.add('flex');
+      });
+
+      document.querySelectorAll('.mobile-hud-item').forEach((item) => {
+        let dragging = false;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        const onDown = (clientX, clientY) => {
+          if (!isHudEditing) return;
+          dragging = true;
+          const rect = item.getBoundingClientRect();
+          offsetX = clientX - rect.left;
+          offsetY = clientY - rect.top;
+          item.style.outline = '2px dashed #fde047';
+        };
+        const onMove = (clientX, clientY) => {
+          if (!dragging || !isHudEditing) return;
+          const maxLeft = window.innerWidth - item.offsetWidth;
+          const maxTop = window.innerHeight - item.offsetHeight;
+          const nx = Math.max(0, Math.min(maxLeft, clientX - offsetX));
+          const ny = Math.max(0, Math.min(maxTop, clientY - offsetY));
+          item.style.left = `${nx}px`;
+          item.style.top = `${ny}px`;
+        };
+        const onUp = () => {
+          if (!dragging) return;
+          dragging = false;
+          item.style.outline = 'none';
+        };
+
+        item.addEventListener('mousedown', (e) => { e.stopPropagation(); onDown(e.clientX, e.clientY); });
+        window.addEventListener('mousemove', (e) => onMove(e.clientX, e.clientY));
+        window.addEventListener('mouseup', onUp);
+
+        item.addEventListener('touchstart', (e) => {
+          if (!isHudEditing) return;
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          onDown(t.clientX, t.clientY);
+        }, { passive: false });
+        item.addEventListener('touchmove', (e) => {
+          if (!isHudEditing) return;
+          e.preventDefault();
+          const t = e.changedTouches[0];
+          onMove(t.clientX, t.clientY);
+        }, { passive: false });
+        item.addEventListener('touchend', onUp);
+      });
+    }
+
+    function renderKeybindList() {
+      const container = document.getElementById('keybind-list');
+      const labels = {
+        forward: '前進 (Move Forward)',
+        backward: '後退 (Move Backward)',
+        left: '左移動 (Strafe Left)',
+        right: '右移動 (Strafe Right)',
+        jump: 'ジャンプ (Jump)',
+        walk: '静音歩き (Slow Walk)',
+        reload: 'リロード (Reload)',
+        interact: 'スパイク設置/解除',
+        fire: '射撃 (Fire)',
+        ads: '覗き込み (ADS)'
+      };
+
+      container.innerHTML = Object.keys(labels).map((actionKey) => {
+        const isWaiting = listeningAction === actionKey;
+        const codeText = isWaiting ? 'キー/クリック待ち...' : formatKeyCode(userSettings.keybinds[actionKey]);
+        return `
+          <div class="flex items-center justify-between bg-white/5 border border-white/10 px-3 py-2 rounded">
+            <span class="text-slate-200 font-bold">${labels[actionKey]}</span>
+            <button type="button" data-bind-action="${actionKey}"
+                    class="px-2.5 py-1 rounded font-mono font-bold text-[11px] cursor-pointer ${
+                      isWaiting ? 'bg-[#ff4655] text-white animate-pulse' : 'bg-[#0f1923] border border-sky-400/50 text-sky-300 hover:bg-sky-500/20'
+                    }">
+              ${codeText}
+            </button>
+          </div>
+        `;
+      }).join('');
+
+      container.querySelectorAll('button[data-bind-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          listeningAction = btn.dataset.bindAction;
+          renderKeybindList();
+        });
+      });
+    }
+
+    function formatKeyCode(code) {
+      if (!code) return 'NONE';
+      if (code === 'Mouse0') return '左クリック';
+      if (code === 'Mouse2') return '右クリック';
+      if (code === 'Mouse1') return 'ホイール押下';
+      return code.replace('Key', '').replace('Digit', '');
+    }
+
+    function updateJoystick(touch, zone, knob) {
+      const rect = zone.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const maxRadius = rect.width * 0.36;
+      let dx = touch.clientX - centerX;
+      let dy = touch.clientY - centerY;
+      const dist = Math.hypot(dx, dy);
+      if (dist > maxRadius) {
+        dx = (dx / dist) * maxRadius;
+        dy = (dy / dist) * maxRadius;
+      }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      touchInput.moveX = dx / maxRadius;
+      touchInput.moveY = dy / maxRadius;
+    }
+
+    /**
+     * ============================================================================
+     * 武器・ADS・リコイル・射撃処理（無限弾薬・味方誤射無効・BUY中当たり判定なし）
+     * ============================================================================
+     */
+    function startReload() {
+      if (weaponState.isReloading || player.isDead) return;
+      if (weaponState.ammo >= WEAPON_CONFIG.magSize) return;
+      weaponState.isReloading = true;
+      weaponState.isADS = false;
+      weaponState.reloadTimer = WEAPON_CONFIG.reloadDuration;
+      document.getElementById('reload-indicator').classList.remove('hidden');
+      playReloadSound();
+    }
+
+    function updateWeaponAndShooting(dt, isMoving, isSlow) {
+      if (player.isDead) return;
+
+      if (weaponState.isReloading) {
+        weaponState.reloadTimer -= dt;
+        if (weaponState.reloadTimer <= 0) {
+          weaponState.ammo = WEAPON_CONFIG.magSize;
+          weaponState.isReloading = false;
+          document.getElementById('reload-indicator').classList.add('hidden');
+          updateAmmoHUD();
+        }
+      }
+
+      if (weaponState.fireCooldown > 0) weaponState.fireCooldown -= dt;
+
+      if (weaponState.isFiring && !weaponState.isReloading && isPlaying && !isSettingsOpen && !isHudEditing) {
+        if (weaponState.ammo > 0) {
+          if (weaponState.fireCooldown <= 0) {
+            fireBullet(isMoving, isSlow);
+            weaponState.fireCooldown = WEAPON_CONFIG.fireRate;
+          }
+        } else {
+          startReload();
+        }
+      } else {
+        weaponState.shotsFiredBurst = Math.max(0, weaponState.shotsFiredBurst - dt * 18);
+      }
+
+      if (!weaponState.isFiring && (recoilState.unrecoveredPitch > 0 || Math.abs(recoilState.unrecoveredYaw) > 0)) {
+        const recoverFactor = Math.min(1, dt * WEAPON_CONFIG.recoilRecoverySpeed);
+        const pitchReturn = recoilState.unrecoveredPitch * recoverFactor;
+        const yawReturn = recoilState.unrecoveredYaw * recoverFactor;
+        player.pitch -= pitchReturn;
+        player.yaw -= yawReturn;
+        recoilState.unrecoveredPitch -= pitchReturn;
+        recoilState.unrecoveredYaw -= yawReturn;
+      }
+
+      const targetAds = (weaponState.isADS && !weaponState.isReloading) ? 1.0 : 0.0;
+      weaponState.adsLerp += (targetAds - weaponState.adsLerp) * Math.min(1, dt * 16);
+
+      const currentFov = THREE.MathUtils.lerp(WEAPON_CONFIG.baseFov, WEAPON_CONFIG.adsFov, weaponState.adsLerp);
+      if (Math.abs(camera.fov - currentFov) > 0.05) {
+        camera.fov = currentFov;
+        camera.updateProjectionMatrix();
+      }
+
+      document.getElementById('crosshair').style.opacity = (1 - weaponState.adsLerp * 0.85).toFixed(2);
+
+      weaponState.kickback = Math.max(0, weaponState.kickback - dt * 0.45);
+      if (weaponState.flashTimer > 0) {
+        weaponState.flashTimer -= dt;
+        if (weaponState.flashTimer <= 0) muzzleFlashMesh.visible = false;
+      }
+
+      if (isMoving && player.isGrounded) weaponState.bobTimer += dt * (isSlow ? 6.5 : 10.5);
+      else weaponState.bobTimer += dt * 1.8;
+
+      const bobAmount = (isMoving && player.isGrounded ? (isSlow ? 0.004 : 0.009) : 0.0015) * (1 - weaponState.adsLerp * 0.7);
+      const bobX = Math.cos(weaponState.bobTimer) * bobAmount;
+      const bobY = Math.abs(Math.sin(weaponState.bobTimer)) * bobAmount;
+
+      const baseX = THREE.MathUtils.lerp(0.24, 0.0, weaponState.adsLerp);
+      const baseY = THREE.MathUtils.lerp(-0.22, -0.085, weaponState.adsLerp);
+      const baseZ = THREE.MathUtils.lerp(-0.38, -0.25, weaponState.adsLerp);
+      weaponPivot.position.set(baseX + bobX, baseY - bobY, baseZ + weaponState.kickback);
+
+      if (weaponState.isReloading) {
+        const tilt = Math.sin((1 - weaponState.reloadTimer / WEAPON_CONFIG.reloadDuration) * Math.PI);
+        gunGroup.rotation.set(-0.35 * tilt, 0.25 * tilt, 0.55 * tilt);
+      } else {
+        gunGroup.rotation.set(weaponState.kickback * 1.4, 0, 0);
+      }
+    }
+
+    function fireBullet(isMoving, isSlow) {
+      weaponState.ammo--;
+      weaponState.shotsFiredBurst++;
+      updateAmmoHUD();
+      playGunshotSound(1.0);
+
+      weaponState.kickback = 0.055;
+      weaponState.flashTimer = 0.032;
+      muzzleFlashMesh.visible = true;
+      muzzleFlashMesh.rotation.z = Math.random() * Math.PI * 2;
+
+      let spread = 0.0012;
+      if (!player.isGrounded) spread += 0.065;
+      else if (isMoving && !isSlow) spread += 0.030;
+      else if (isMoving && isSlow) spread += 0.007;
+      if (!weaponState.isADS) spread += 0.005;
+      spread += Math.min(0.032, Math.max(0, weaponState.shotsFiredBurst - 2) * 0.0042);
+
+      const raycaster = new THREE.Raycaster();
+      const spreadX = (Math.random() - 0.5) * spread;
+      const spreadY = (Math.random() - 0.5) * spread;
+      raycaster.setFromCamera(new THREE.Vector2(spreadX, spreadY), camera);
+
+      const hits = raycaster.intersectObjects(shootableMeshes, false);
+      const startPos = new THREE.Vector3();
+      muzzlePoint.getWorldPosition(startPos);
+      let endPos = raycaster.ray.origin.clone().add(raycaster.ray.direction.clone().multiplyScalar(95));
+
+      for (let i = 0; i < hits.length; i++) {
+        const hit = hits[i];
+        const hitData = hit.object.userData;
+
+        if (hitData && hitData.hitType === 'agent' && hitData.agent.isDead) continue;
+        if (hitData && hitData.hitType === 'agent' && hitData.agent.team === 'ally') continue;
+
+        if (hitData && hitData.hitType === 'agent') {
+          if (matchState.phase !== 'ACTIVE') continue;
+
+          endPos.copy(hit.point);
+          const agent = hitData.agent;
+          const zone = hitData.zone;
+          const isHead = zone === 'head';
+          const damage = isHead ? WEAPON_CONFIG.damageHead : (zone === 'legs' ? WEAPON_CONFIG.damageLegs : WEAPON_CONFIG.damageBody);
+
+          player.damageDealt += damage;
+          const wasKilled = applyDamageToAgent(agent, damage, isHead, hit.point, player);
+          if (agent.isRemoteControlled && agent.remoteUid) {
+            sendCombatEvent('HIT_PLAYER', {
+              targetUid: agent.remoteUid,
+              damage,
+              attackerName: `Player_${(netState.userId || 'YOU').slice(0, 4).toUpperCase()}`
+            });
+          }
+          playHitmarkerSound(isHead, wasKilled);
+          showCenterDamageReadout(damage, zone, wasKilled);
+
+          const hm = document.getElementById('hitmarker');
+          hm.style.opacity = '1';
+          hm.style.transform = isHead ? 'translate(-50%, -50%) scale(1.28)' : 'translate(-50%, -50%) scale(1.0)';
+          clearTimeout(hm._timer);
+          hm._timer = setTimeout(() => { hm.style.opacity = '0'; }, 110);
+
+          spawnImpactSparks(hit.point, new THREE.Vector3(0, 1, 0), isHead ? 0xff4655 : 0x00ffcc);
+          break;
+        } else {
+          endPos.copy(hit.point);
+          const norm = hit.face ? hit.face.normal : new THREE.Vector3(0, 1, 0);
+          spawnImpactSparks(hit.point, norm, 0xffaa33);
+          spawnBulletHole(hit.point, norm);
+          break;
+        }
+      }
+
+      spawnHighSpeedTracer(startPos, endPos, 0xfff3a1);
+      sendCombatEvent('SHOT', {
+        sx: Number(startPos.x.toFixed(2)), sy: Number(startPos.y.toFixed(2)), sz: Number(startPos.z.toFixed(2)),
+        ex: Number(endPos.x.toFixed(2)), ey: Number(endPos.y.toFixed(2)), ez: Number(endPos.z.toFixed(2))
+      });
+
+      const adsRecoilFactor = weaponState.isADS ? 0.78 : 1.0;
+      const burstScale = 1 + Math.min(0.8, weaponState.shotsFiredBurst * 0.08);
+      const kickPitch = WEAPON_CONFIG.recoilPitchStep * adsRecoilFactor * burstScale;
+      const kickYaw = (Math.random() - 0.5) * WEAPON_CONFIG.recoilYawRange * adsRecoilFactor * burstScale;
+
+      player.pitch = Math.min(Math.PI / 2 - 0.05, player.pitch + kickPitch);
+      player.yaw += kickYaw;
+      recoilState.unrecoveredPitch += kickPitch;
+      recoilState.unrecoveredYaw += kickYaw;
+    }
+
+    function spawnHighSpeedTracer(startPos, endPos, colorHex = 0xfff3a1) {
+      const distance = startPos.distanceTo(endPos);
+      if (distance < 0.2) return;
+      const geo = new THREE.CylinderGeometry(0.013, 0.013, distance, 6);
+      geo.rotateX(Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.92 });
+      const tracer = new THREE.Mesh(geo, mat);
+      tracer.position.copy(startPos).lerp(endPos, 0.5);
+      tracer.lookAt(endPos);
+      scene.add(tracer);
+      activeTracers.push({ mesh: tracer, life: 0.05, maxLife: 0.05 });
+    }
+
+    function spawnImpactSparks(point, normal, colorHex) {
+      for (let i = 0; i < 5; i++) {
+        const spark = new THREE.Mesh(
+          new THREE.BoxGeometry(0.032, 0.032, 0.032),
+          new THREE.MeshBasicMaterial({ color: colorHex })
+        );
+        spark.position.copy(point).addScaledVector(normal, 0.03);
+        const vel = new THREE.Vector3(
+          normal.x * 2.4 + (Math.random() - 0.5) * 4.2,
+          normal.y * 2.4 + Math.random() * 3.2,
+          normal.z * 2.4 + (Math.random() - 0.5) * 4.2
+        );
+        scene.add(spark);
+        activeSparks.push({ mesh: spark, vel, life: 0.20 });
+      }
+    }
+
+    function spawnBulletHole(point, normal) {
+      const hole = new THREE.Mesh(
+        new THREE.CircleGeometry(0.042, 8),
+        new THREE.MeshBasicMaterial({ color: 0x181c20, depthWrite: false })
+      );
+      hole.position.copy(point).addScaledVector(normal, 0.012);
+      hole.lookAt(point.clone().add(normal));
+      scene.add(hole);
+      bulletHoles.push(hole);
+      if (bulletHoles.length > MAX_BULLET_HOLES) {
+        const oldest = bulletHoles.shift();
+        scene.remove(oldest);
+        oldest.geometry.dispose();
+        oldest.material.dispose();
+      }
+    }
+
+    function updateVisualEffects(dt) {
+      for (let i = activeTracers.length - 1; i >= 0; i--) {
+        const t = activeTracers[i];
+        t.life -= dt;
+        if (t.life <= 0) {
+          scene.remove(t.mesh);
+          t.mesh.geometry.dispose();
+          t.mesh.material.dispose();
+          activeTracers.splice(i, 1);
+        } else {
+          t.mesh.material.opacity = t.life / t.maxLife;
+        }
+      }
+
+      for (let i = activeSparks.length - 1; i >= 0; i--) {
+        const s = activeSparks[i];
+        s.life -= dt;
+        if (s.life <= 0) {
+          scene.remove(s.mesh);
+          s.mesh.geometry.dispose();
+          s.mesh.material.dispose();
+          activeSparks.splice(i, 1);
+        } else {
+          s.vel.y -= 10 * dt;
+          s.mesh.position.addScaledVector(s.vel, dt);
+          s.mesh.rotation.x += dt * 8;
+          s.mesh.rotation.y += dt * 10;
+        }
+      }
+
+      for (let i = activeKillEffects.length - 1; i >= 0; i--) {
+        const ke = activeKillEffects[i];
+        ke.life -= dt;
+        if (ke.life <= 0) {
+          scene.remove(ke.pillar);
+          scene.remove(ke.ring);
+          ke.pillar.geometry.dispose();
+          ke.pillar.material.dispose();
+          ke.ring.geometry.dispose();
+          ke.ring.material.dispose();
+          activeKillEffects.splice(i, 1);
+        } else {
+          const progress = 1 - (ke.life / ke.maxLife);
+          const alpha = 1 - progress;
+          ke.pillar.scale.set(1 - progress * 0.5, 1 + progress * 0.45, 1 - progress * 0.5);
+          ke.pillar.material.opacity = alpha * 0.72;
+          const ringScale = 1 + progress * 5.2;
+          ke.ring.scale.set(ringScale, ringScale, 1);
+          ke.ring.material.opacity = alpha * 0.9;
+        }
+      }
+
+      camera.updateMatrixWorld();
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      for (let i = damagePopups.length - 1; i >= 0; i--) {
+        const p = damagePopups[i];
+        p.life -= dt;
+        if (p.life <= 0) {
+          p.el.remove();
+          damagePopups.splice(i, 1);
+          continue;
+        }
+        p.worldPos.y += dt * 1.15;
+        const proj = p.worldPos.clone().project(camera);
+        if (proj.z > 1) {
+          p.el.style.display = 'none';
+        } else {
+          p.el.style.display = 'block';
+          const sx = Math.max(40, Math.min(w - 40, (proj.x * 0.5 + 0.5) * w));
+          const sy = Math.max(40, Math.min(h - 40, (-proj.y * 0.5 + 0.5) * h));
+          const progress = 1 - (p.life / p.maxLife);
+          const scale = progress < 0.2 ? (0.85 + progress * 1.5) : 1.0;
+          p.el.style.left = `${sx}px`;
+          p.el.style.top = `${sy}px`;
+          p.el.style.transform = `translate(-50%, -50%) scale(${scale.toFixed(2)})`;
+          p.el.style.opacity = Math.min(1, (p.life / p.maxLife) * 1.4).toFixed(2);
+        }
+      }
+    }
+
+    function updateAmmoHUD() {
+      const curEl = document.getElementById('ammo-current');
+      curEl.textContent = weaponState.ammo;
+      document.getElementById('ammo-reserve').textContent = '∞';
+      curEl.className = weaponState.ammo <= 7
+        ? 'text-2xl sm:text-3xl font-bold text-[#ff4655]'
+        : 'text-2xl sm:text-3xl font-bold text-white';
+    }
+
+    /**
+     * ============================================================================
+     * プレイヤー物理演算・滑らかなカメラ補間・観戦時の一人称視点
+     * ============================================================================
+     */
+    function updatePlayerPhysics(dt) {
+      agents.forEach(a => { a.root.visible = true; });
+
+      if (player.isDead) {
+        const aliveAllies = agents.filter(a => a.team === 'ally' && !a.isDead);
+        if (aliveAllies.length > 0) {
+          const target = aliveAllies[player.spectateTargetIndex % aliveAllies.length];
+          document.getElementById('spectator-target-name').textContent = `1ST PERSON: ${target.name} (HP: ${target.hp})`;
+
+          target.root.visible = false;
+          const eyePos = new THREE.Vector3(target.root.position.x, PLAYER_CONFIG.eyeHeight, target.root.position.z);
+          camera.position.lerp(eyePos, Math.min(1, dt * 18));
+
+          const specYawDiff = normalizeAngleRad(target.smoothedYaw - renderedYaw);
+          renderedYaw = normalizeAngleRad(renderedYaw + specYawDiff * Math.min(1, dt * 16));
+          renderedPitch = THREE.MathUtils.lerp(renderedPitch, -0.02, Math.min(1, dt * 12));
+
+          camera.rotation.y = renderedYaw;
+          camera.rotation.x = renderedPitch;
+        }
+        drawMinimap();
+        return;
+      }
+
+      if (isSettingsOpen || isHudEditing) {
+        drawMinimap();
+        return;
+      }
+
+      let forwardInput = 0;
+      let rightInput = 0;
+      if (actionKeys.forward) forwardInput += 1;
+      if (actionKeys.backward) forwardInput -= 1;
+      if (actionKeys.right) rightInput += 1;
+      if (actionKeys.left) rightInput -= 1;
+
+      if (isMobileDevice) {
+        forwardInput -= touchInput.moveY;
+        rightInput += touchInput.moveX;
+      }
+
+      const inputLen = Math.hypot(forwardInput, rightInput);
+      if (inputLen > 1) {
+        forwardInput /= inputLen;
+        rightInput /= inputLen;
+      }
+
+      const isSlow = actionKeys.walk || player.isWalkingSlow;
+      let currentSpeed = isSlow ? PLAYER_CONFIG.shiftWalkSpeed : PLAYER_CONFIG.walkSpeed;
+      if (weaponState.isADS) currentSpeed = Math.min(currentSpeed, PLAYER_CONFIG.adsWalkSpeed);
+
+      const sinYaw = Math.sin(player.yaw);
+      const cosYaw = Math.cos(player.yaw);
+      const moveX = (-sinYaw * forwardInput + cosYaw * rightInput) * currentSpeed;
+      const moveZ = (-cosYaw * forwardInput - sinYaw * rightInput) * currentSpeed;
+
+      const totalDist = Math.hypot(moveX * dt, moveZ * dt);
+      const subSteps = Math.max(1, Math.ceil(totalDist / 0.04));
+      const stepDt = dt / subSteps;
+
+      for (let s = 0; s < subSteps; s++) {
+        player.position.x += moveX * stepDt;
+        player.position.z += moveZ * stepDt;
+        resolveCircleAABBCollisions();
+      }
+
+      if (actionKeys.jump && player.isGrounded) {
+        player.velocity.y = PLAYER_CONFIG.jumpVelocity;
+        player.isGrounded = false;
+      }
+
+      player.velocity.y -= PLAYER_CONFIG.gravity * dt;
+      player.position.y += player.velocity.y * dt;
+      resolveVerticalCollisions();
+
+      const posSmooth = 1 - Math.exp(-32 * dt);
+      renderedCamPos.x += (player.position.x - renderedCamPos.x) * posSmooth;
+      renderedCamPos.y += (player.position.y + PLAYER_CONFIG.eyeHeight - renderedCamPos.y) * posSmooth;
+      renderedCamPos.z += (player.position.z - renderedCamPos.z) * posSmooth;
+      camera.position.copy(renderedCamPos);
+
+      const rotSmooth = 1 - Math.exp(-38 * dt);
+      renderedYaw += (player.yaw - renderedYaw) * rotSmooth;
+      renderedPitch += (player.pitch - renderedPitch) * rotSmooth;
+      camera.rotation.y = renderedYaw;
+      camera.rotation.x = renderedPitch;
+
+      const isMoving = inputLen > 0.05;
+      updateWeaponAndShooting(dt, isMoving, isSlow);
+      updateHUD(isMoving, isSlow);
+      drawMinimap();
+    }
+
+    function resolveCircleAABBCollisions() {
+      const r = PLAYER_CONFIG.radius;
+      const pMinY = player.position.y + 0.06;
+      const pMaxY = player.position.y + PLAYER_CONFIG.height;
+
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i < colliders.length; i++) {
+          const box = colliders[i];
+          if (pMaxY <= box.minY || pMinY >= box.maxY) continue;
+          const closestX = Math.max(box.minX, Math.min(player.position.x, box.maxX));
+          const closestZ = Math.max(box.minZ, Math.min(player.position.z, box.maxZ));
+          const dx = player.position.x - closestX;
+          const dz = player.position.z - closestZ;
+          const distSq = dx * dx + dz * dz;
+          if (distSq < r * r) {
+            const dist = Math.sqrt(distSq);
+            if (dist > 1e-6) {
+              const overlap = r - dist;
+              player.position.x += (dx / dist) * overlap;
+              player.position.z += (dz / dist) * overlap;
+            }
+          }
+        }
+      }
+    }
+
+    function resolveVerticalCollisions() {
+      const r = PLAYER_CONFIG.radius * 0.85;
+      player.isGrounded = false;
+      if (player.position.y <= 0) {
+        player.position.y = 0;
+        player.velocity.y = 0;
+        player.isGrounded = true;
+      }
+      for (let i = 0; i < colliders.length; i++) {
+        const box = colliders[i];
+        const closestX = Math.max(box.minX, Math.min(player.position.x, box.maxX));
+        const closestZ = Math.max(box.minZ, Math.min(player.position.z, box.maxZ));
+        const dx = player.position.x - closestX;
+        const dz = player.position.z - closestZ;
+        if (dx * dx + dz * dz < r * r) {
+          if (player.velocity.y <= 0 && player.position.y >= box.maxY - 0.35 && player.position.y <= box.maxY + 0.05) {
+            player.position.y = box.maxY;
+            player.velocity.y = 0;
+            player.isGrounded = true;
+          } else if (player.velocity.y > 0 && player.position.y + PLAYER_CONFIG.height >= box.minY && player.position.y < box.minY) {
+            player.position.y = box.minY - PLAYER_CONFIG.height;
+            player.velocity.y = 0;
+          }
+        }
+      }
+    }
+
+    function updateHUD(isMoving, isSlow) {
+      const stateBadge = document.getElementById('move-state-badge');
+      if (!player.isGrounded) stateBadge.textContent = 'AIR';
+      else if (weaponState.isADS) stateBadge.textContent = 'ADS ZOOM';
+      else if (isMoving && isSlow) stateBadge.textContent = 'WALK';
+      else if (isMoving) stateBadge.textContent = 'RUN';
+      else stateBadge.textContent = 'READY';
+
+      const recoilSpread = Math.min(14, weaponState.shotsFiredBurst * 2.2);
+      const moveSpread = !player.isGrounded ? 16 : (isMoving && !isSlow ? 12 : 7);
+      const spread = moveSpread + recoilSpread;
+
+      document.getElementById('ch-top').style.transform = `translateY(-${spread}px)`;
+      document.getElementById('ch-bottom').style.transform = `translateY(${spread}px)`;
+      document.getElementById('ch-left').style.transform = `translateX(-${spread}px)`;
+      document.getElementById('ch-right').style.transform = `translateX(${spread}px)`;
+
+      const x = player.position.x;
+      const z = player.position.z;
+      let area = 'MID';
+      if (z > 17.0) area = 'SOUTH SPAWN';
+      else if (z < -18.0) area = 'NORTH SPAWN';
+      else if (x < -9.2) area = z < 1.5 ? 'A SITE' : 'A MAIN';
+      else if (x > 9.2) area = z < 1.5 ? 'B SITE' : 'B MAIN';
+      else area = z < -8 ? 'TOP MID' : 'MID';
+      document.getElementById('callout-badge').textContent = area;
+    }
+
+    function drawMinimap() {
+      const canvas = document.getElementById('minimap-canvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#131f2b';
+      ctx.fillRect(0, 0, w, h);
+
+      const scale = Math.min((w - 16) / MAP_BOUNDS.width, (h - 16) / MAP_BOUNDS.depth);
+      const offsetX = w / 2;
+      const offsetZ = h / 2;
+      const toMapX = (wx) => offsetX + wx * scale;
+      const toMapY = (wz) => offsetZ + wz * scale;
+
+      ctx.fillStyle = 'rgba(38, 140, 130, 0.25)';
+      ctx.fillRect(toMapX(-25), toMapY(-18.0), 15.8 * scale, 19.5 * scale);
+      ctx.fillStyle = 'rgba(43, 103, 138, 0.25)';
+      ctx.fillRect(toMapX(9.2), toMapY(-18.0), 15.8 * scale, 19.5 * scale);
+
+      plantZones.forEach(pz => {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(toMapX(pz.x - 2.1), toMapY(pz.z - 2.1), 4.2 * scale, 4.2 * scale);
+      });
+
+      for (let i = 0; i < mapVisuals.length; i++) {
+        const item = mapVisuals[i];
+        ctx.fillStyle = item.isTall ? '#64788c' : '#d96b38';
+        ctx.fillRect(toMapX(item.x - item.w / 2), toMapY(item.z - item.d / 2), item.w * scale, item.d * scale);
+      }
+
+      if (spikeState.planted) {
+        ctx.beginPath();
+        ctx.arc(toMapX(spikeState.position.x), toMapY(spikeState.position.z), 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff4655';
+        ctx.fill();
+      }
+
+      for (let i = 0; i < agents.length; i++) {
+        const ag = agents[i];
+        if (ag.isDead) continue;
+        if (ag.team === 'enemy') {
+          const seenByAlly = (!player.isDead && isSegmentClearOfWalls(player.position.x, player.position.z, ag.root.position.x, ag.root.position.z)) ||
+            agents.some(al => al.team === 'ally' && !al.isDead && canBotPerceiveTarget(al, ag.root.position.x, ag.root.position.z));
+          if (!seenByAlly) continue;
+        }
+        ctx.beginPath();
+        ctx.arc(toMapX(ag.root.position.x), toMapY(ag.root.position.z), 3.2, 0, Math.PI * 2);
+        ctx.fillStyle = ag.team === 'ally' ? '#38bdf8' : '#ff4655';
+        ctx.fill();
+      }
+
+      if (!player.isDead) {
+        const px = toMapX(renderedCamPos.x);
+        const py = toMapY(renderedCamPos.z);
+        const lookAngle = -renderedYaw - Math.PI / 2;
+
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(lookAngle);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, 18, -0.45, 0.45);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(0, 255, 204, 0.28)';
+        ctx.fill();
+        ctx.restore();
+
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#00ffcc';
+        ctx.fill();
+      }
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      updateRoundLifecycle(dt);
+      updatePlayerPhysics(dt);
+      updateTacticalBots(dt);
+      updateVisualEffects(dt);
+      if (isPlaying) broadcastLocalState(dt);
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
